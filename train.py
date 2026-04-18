@@ -111,10 +111,6 @@ def load_micro_batch(
     start = micro_step * tokens_per_micro
     end = (micro_step + 1) * tokens_per_micro
 
-    tokens_per_epoch = 10_000 * 2048 * 512 // 8 + 1024
-    start = start % tokens_per_epoch
-    end = start + tokens_per_micro
-
     token_slice = np.asarray(all_tokens[start:end], dtype=np.int64)
     token_batch = torch.from_numpy(token_slice.reshape(batch_size, sample_length))
     token_batch = token_batch.to(device, non_blocking=True)
