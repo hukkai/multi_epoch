@@ -6,7 +6,7 @@ for r in 0 1 2 3 4 5 6 7; do
     --split train \
     --shard-rank $r \
     --num-shards 8 \
-    --num-documents 20000000 \
+    --num-documents 40000000 \
     --num-workers 8 \
     --output-dir data/C4
 done
