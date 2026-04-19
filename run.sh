@@ -22,5 +22,5 @@ OMP_NUM_THREADS=1 torchrun \
     --so-lr $SO_LR \
     --num-steps 50_000 \
     --orthogonal-type "${ORTH_TYPE}" \
-    --sub-matrix $SUB_MATRIX \
+    --sub-matrix "${SUB_MATRIX}" \
     --orth-beta2 "${ORTH_BETA2}"
