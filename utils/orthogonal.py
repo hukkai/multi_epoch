@@ -4,7 +4,7 @@ import torch
 import torch.distributed as dist
 
 from .ops import polar #, fast_exp_action
-#from .fuse_ops import update_fused
+from .fuse_ops import update_fused
 from .polar_taylor import stiefel_update_taylor
 
 class SOOptimizer:
@@ -16,6 +16,7 @@ class SOOptimizer:
         eps: float = 1e-8,
         sub_matrix: int = 8,
         project_last: bool = True,
+        retraction_type: str = "polar",
     ) -> None:
         self.param = param
         self.lr = lr
@@ -47,6 +48,8 @@ class SOOptimizer:
             raise ValueError(f"Matrix dim {self.dim} must be divisible by sub_matrix {sub_matrix}")
 
         self.orth_dim = self.dim // sub_matrix
+
+        self.retraction_type = retraction_type
 
     def state_dict(self) -> dict:
         return {
@@ -91,9 +94,13 @@ class SOOptimizer:
 
         x = x.reshape(-1, self.orth_dim, self.dim)
         update = update.reshape_as(x)
-        # new_x = fast_exp_action(x, update)
-        # new_x = update_fused(x, update)
-        new_x = stiefel_update_taylor(x, update)
+
+        if self.retraction_type == "rotation":
+            new_x = update_fused(x, update)
+        elif self.retraction_type == "polar":
+            new_x = stiefel_update_taylor(x, update)
+        else:
+            raise NotImplementedError
 
         if is_last and self.project_last:
             new_x = polar(new_x)
