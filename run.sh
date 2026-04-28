@@ -4,7 +4,7 @@ export MASTER_PORT=$((12000 + RANDOM % 20000))
 ORTH_TYPE=${1:-all}
 ORTH_BETA2=${2:-0.95}
 SO_LR=${3:-1.0}
-SUB_MATRIX=${4:-48}
+SUB_MATRIX=${4:-96}
 
 OMP_NUM_THREADS=1 torchrun \
     --nproc_per_node 8 \
@@ -18,7 +18,7 @@ OMP_NUM_THREADS=1 torchrun \
     --global-batch-size 512 \
     --seq-length 2048 \
     --lr 1.2e-3 \
-    --min-lr 1.2e-4 \
+    --min-lr 1.2e-5 \
     --so-lr $SO_LR \
     --num-steps 50_000 \
     --orthogonal-type "${ORTH_TYPE}" \

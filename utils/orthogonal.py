@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import torch
 import torch.distributed as dist
+import torch.nn.functional as F
 
 from .ops import polar #, fast_exp_action
 from .fuse_ops import update_fused
@@ -90,10 +91,11 @@ class SOOptimizer:
 
         m_hat = self.m / (1.0 - self.beta1**self.step_count)
         v_hat = self.v / (1.0 - self.beta2**self.step_count)
-        update = -m_hat / (v_hat.sqrt() + self.eps) * lr
+        update = -m_hat / (v_hat.sqrt() + self.eps)
 
         x = x.reshape(-1, self.orth_dim, self.dim)
         update = update.reshape_as(x)
+        update = F.normalize(update, p=2, dim=-1) * lr
 
         if self.retraction_type == "rotation":
             new_x = update_fused(x, update)
