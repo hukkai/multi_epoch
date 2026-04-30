@@ -208,7 +208,8 @@ def main() -> None:
         is_last_step = (step + 1) % polar_step == 0
 
         if orth_opt is not None:
-            orth_opt.step(lr=lr * args.so_lr, is_last=is_last_step)
+            so_lr = min(10, 3 + 7 * (step / 20_000))
+            orth_opt.step(lr=lr * so_lr, is_last=is_last_step)
 
         optimizer.step()
         optimizer.zero_grad(set_to_none=True)
