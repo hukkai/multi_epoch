@@ -42,7 +42,7 @@ class SOOptimizer:
         self.local_slice = slice(self.rank * per_rank, (self.rank + 1) * per_rank)
 
         self.m = torch.zeros_like(param.data[self.local_slice])
-        self.v = torch.zeros_like(self.m)
+        # self.v = torch.zeros_like(self.m)
         self.buffer = torch.zeros_like(param.data)
         self.step_count = torch.tensor(0.0, device=self.m.device)
 
@@ -57,7 +57,7 @@ class SOOptimizer:
     def state_dict(self) -> dict:
         return {
             "m": self.m,
-            "v": self.v,
+            # "v": self.v,
             "lr": self.lr,
             "beta1": self.beta1,
             "beta2": self.beta2,
@@ -68,7 +68,7 @@ class SOOptimizer:
 
     def load_state_dict(self, state: dict) -> None:
         self.m = state.get("m", self.m).to(device=self.m.device, dtype=self.m.dtype)
-        self.v = state.get("v", self.v).to(device=self.v.device, dtype=self.v.dtype)
+        # self.v = state.get("v", self.v).to(device=self.v.device, dtype=self.v.dtype)
         self.lr = state.get("lr", self.lr)
         self.beta1 = state.get("beta1", self.beta1)
         self.beta2 = state.get("beta2", self.beta2)
@@ -88,15 +88,20 @@ class SOOptimizer:
         x = self.param.data[self.local_slice]
         grad = self.param.grad[self.local_slice]
 
+        """
         self.m += (grad - self.m) * (1.0 - self.beta1)
         self.v += (grad.pow(2) - self.v) * (1.0 - self.beta2)
 
         m_hat = self.m / (1.0 - self.beta1**self.step_count)
         v_hat = self.v / (1.0 - self.beta2**self.step_count)
         update = -m_hat / (v_hat.sqrt() + self.eps)
+        """
+        
+        self.m.mul_(self.beta1)
+        self.m.add_(grad)
 
         x = x.reshape(-1, self.orth_dim, self.dim)
-        update = update.reshape_as(x)
+        update = -self.m.reshape_as(x)
         update = F.normalize(update, p=2, dim=(1, 2)) * lr * math.sqrt(self.orth_dim)
 
         if self.retraction_type == "rotation":
