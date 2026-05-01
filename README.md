@@ -14,9 +14,5 @@ bash run.sh all 0.95 10.0
 ```
 
 ```
-bash run.sh all 0.95 0.33
-```
-
-```
-bash run.sh all 0.95 0.1
+bash run.sh all 0.95 20.0
 ```

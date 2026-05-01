@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
@@ -95,7 +97,7 @@ class SOOptimizer:
 
         x = x.reshape(-1, self.orth_dim, self.dim)
         update = update.reshape_as(x)
-        update = F.normalize(update, p=2, dim=-1) * lr
+        update = F.normalize(update, p=2, dim=(1, 2)) * lr * math.sqrt(self.orth_dim)
 
         if self.retraction_type == "rotation":
             new_x = update_fused(x, update)
