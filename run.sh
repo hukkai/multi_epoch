@@ -22,4 +22,4 @@ OMP_NUM_THREADS=1 torchrun \
     --num-steps 50_000 \
     --orthogonal-type "${ORTH_TYPE}" \
     --sub-matrix 96 \
-    --cg-steps 3 
+    --cg-steps "${CG_STEPS}"
