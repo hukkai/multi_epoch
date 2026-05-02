@@ -2,9 +2,8 @@
 export MASTER_PORT=$((12000 + RANDOM % 20000))
 
 ORTH_TYPE=${1:-all}
-ORTH_BETA2=${2:-0.95}
-SO_LR=${3:-1.0}
-SUB_MATRIX=${4:-96}
+CG_STEPS=${2:-3}
+
 
 OMP_NUM_THREADS=1 torchrun \
     --nproc_per_node 8 \
@@ -19,8 +18,8 @@ OMP_NUM_THREADS=1 torchrun \
     --seq-length 2048 \
     --lr 1.2e-3 \
     --min-lr 1.2e-5 \
-    --so-lr $SO_LR \
+    --so-lr 1.0 \
     --num-steps 50_000 \
     --orthogonal-type "${ORTH_TYPE}" \
-    --sub-matrix "${SUB_MATRIX}" \
-    --orth-beta2 "${ORTH_BETA2}"
+    --sub-matrix 96 \
+    --cg-steps "${CG_STEPS}"

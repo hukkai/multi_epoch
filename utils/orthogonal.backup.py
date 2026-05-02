@@ -10,45 +10,6 @@ from .ops import polar #, fast_exp_action
 from .fuse_ops import update_fused
 from .polar_taylor import stiefel_update_taylor
 
-
-def sym(A):
-    return 0.5 * (A + A.transpose(-1, -2))
-
-
-def A_op(Lambda, X, W):
-    # Lambda: n x n symmetric
-    # X: n x m
-    # W: n x m, W = 1 / (sqrt(v) + eps)
-    return sym((W * (Lambda @ X)) @ X.transpose(-1, -2))
-
-
-def solve_lambda_cg(X, M, W, max_iter=10):
-    b = -sym((W * M) @ X.transpose(-1, -2))
-    Lambda = torch.zeros_like(b)
-
-    R = b - A_op(Lambda, X, W)
-    R = sym(R)
-    P = R.clone()
-    rs_old = (R ** 2).sum(dim=(-2, -1), keepdim=True)
-
-
-    for _ in range(max_iter):
-        AP = A_op(P, X, W)
-        denom = (P * AP).sum(dim=(-2, -1), keepdim=True)
-        alpha = rs_old / (denom + 1e-10)
-        Lambda = Lambda + alpha * P
-        Lambda = sym(Lambda)
-        R = R - alpha * AP
-        R = sym(R)
-        rs_new = (R ** 2).sum(dim=(-2, -1), keepdim=True)
-        beta = rs_new / (rs_old + 1e-10)
-        P = R + beta * P
-        P = sym(P)
-        rs_old = rs_new
-
-    return sym(Lambda)
-
-
 class SOOptimizer:
     def __init__(
         self,
@@ -59,7 +20,6 @@ class SOOptimizer:
         sub_matrix: int = 8,
         project_last: bool = True,
         retraction_type: str = "polar",
-        cg_steps: int = 3,
     ) -> None:
         self.param = param
         self.lr = lr
@@ -93,7 +53,6 @@ class SOOptimizer:
         self.orth_dim = self.dim // sub_matrix
 
         self.retraction_type = retraction_type
-        self.cg_steps = cg_steps
 
     def state_dict(self) -> dict:
         return {
@@ -130,20 +89,15 @@ class SOOptimizer:
         grad = self.param.grad[self.local_slice]
 
         self.m += (grad - self.m) * (1.0 - self.beta1)
-        self.v += (grad ** 2 - self.v) * (1.0 - self.beta2)
+        self.v += (grad.pow(2) - self.v) * (1.0 - self.beta2)
 
         m_hat = self.m / (1.0 - self.beta1**self.step_count)
         v_hat = self.v / (1.0 - self.beta2**self.step_count)
-
+        update = -m_hat / (v_hat.sqrt() + self.eps)
 
         x = x.reshape(-1, self.orth_dim, self.dim)
-        M = m_hat.reshape_as(x)
-        W = 1.0 / (v_hat.sqrt() + self.eps)
-        W = W.reshape_as(x)
-
-        Lambda = solve_lambda_cg(x, M, W, max_iter=self.cg_steps)
-        update = -lr * W * (M + Lambda @ x)
-
+        update = update.reshape_as(x)
+        update = F.normalize(update, p=2, dim=(1, 2)) * lr * math.sqrt(self.orth_dim)
 
         if self.retraction_type == "rotation":
             new_x = update_fused(x, update)

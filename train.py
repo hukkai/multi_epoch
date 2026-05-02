@@ -60,6 +60,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--orth-beta2", type=float, default=0.95)
     parser.add_argument("--orth-eps", type=float, default=1e-8)
     parser.add_argument("--retraction-type", type=str, default="polar")
+    parser.add_argument("--cg-steps", type=int, default=3)
 
     parser.add_argument("--no-orth-project-last", dest="orth_project_last", action="store_false")
     parser.set_defaults(orth_project_last=True)
@@ -164,6 +165,7 @@ def main() -> None:
             sub_matrix=args.sub_matrix,
             project_last=args.orth_project_last,
             retraction_type=args.retraction_type,
+            cg_steps=args.cg_steps,
         )
 
     optimizer.zero_grad(set_to_none=True)
