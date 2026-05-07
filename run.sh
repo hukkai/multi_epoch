@@ -3,6 +3,7 @@ export MASTER_PORT=$((12000 + RANDOM % 20000))
 
 ORTH_TYPE=${1:-all}
 SO_LR=${2:-1.0}
+PROJECT_MOMENTUM=${3:-false}
 
 OMP_NUM_THREADS=1 torchrun \
     --nproc_per_node 8 \
@@ -20,4 +21,5 @@ OMP_NUM_THREADS=1 torchrun \
     --so-lr "${SO_LR}" \
     --num-steps 50_000 \
     --orthogonal-type "${ORTH_TYPE}" \
+    --project-momentum "${PROJECT_MOMENTUM}" \
     --sub-matrix 96
