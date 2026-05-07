@@ -23,6 +23,14 @@ from utils import (
 )
 
 
+def str2bool(value: str) -> bool:
+    if value.lower() in ("true", "1", "yes", "y", "on"):
+        return True
+    if value.lower() in ("false", "0", "no", "n", "off"):
+        return False
+    raise argparse.ArgumentTypeError(f"invalid bool value: {value}")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser("Orthogonal LLaMA-2-style pretraining")
 
@@ -57,13 +65,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--so-lr", type=float, default=0.5)
     parser.add_argument("--sub-matrix", type=int, default=16)
     parser.add_argument("--orth-beta1", type=float, default=0.9)
-    parser.add_argument("--orth-beta2", type=float, default=0.95)
-    parser.add_argument("--orth-eps", type=float, default=1e-8)
-    parser.add_argument("--retraction-type", type=str, default="polar")
-    parser.add_argument("--cg-steps", type=int, default=3)
 
-    parser.add_argument("--no-orth-project-last", dest="orth_project_last", action="store_false")
-    parser.set_defaults(orth_project_last=True)
+    parser.add_argument("--strict-stiefel-last", type=str2bool, default=True)
+    parser.add_argument("--project-momentum", type=str2bool, default=False)
+
 
     return parser.parse_args()
 
@@ -160,12 +165,10 @@ def main() -> None:
         orth_opt = SOOptimizer(
             module.chunk_weights,
             lr=args.lr * args.so_lr,
-            betas=(args.orth_beta1, args.orth_beta2),
-            eps=args.orth_eps,
+            beta1=args.orth_beta1,
             sub_matrix=args.sub_matrix,
-            project_last=args.orth_project_last,
-            retraction_type=args.retraction_type,
-            cg_steps=args.cg_steps,
+            strict_stiefel=args.strict_stiefel_last,
+            project_momentum=args.project_momentum,
         )
 
     optimizer.zero_grad(set_to_none=True)
@@ -205,9 +208,9 @@ def main() -> None:
         if args.clip_grad and args.clip_grad > 0:
             torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip_grad)
 
-        # polar retraction 50 times in the entire training
-        polar_step = args.num_steps // 50 or 1
-        is_last_step = (step + 1) % polar_step == 0
+        # strict stiefel 50 times in the entire training
+        strict_stiefel_steps = args.num_steps // 50 or 1
+        is_last_step = (step + 1) % strict_stiefel_steps == 0
 
         if orth_opt is not None:
             orth_opt.step(lr=lr * args.so_lr, is_last=is_last_step)

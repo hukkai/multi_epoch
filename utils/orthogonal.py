@@ -1,52 +1,10 @@
 from __future__ import annotations
 
-import math
-
 import torch
 import torch.distributed as dist
-import torch.nn.functional as F
 
-from .ops import polar #, fast_exp_action
-from .fuse_ops import update_fused
-from .polar_taylor import stiefel_update_taylor
-
-
-def sym(A):
-    return 0.5 * (A + A.transpose(-1, -2))
-
-
-def A_op(Lambda, X, W):
-    # Lambda: n x n symmetric
-    # X: n x m
-    # W: n x m, W = 1 / (sqrt(v) + eps)
-    return sym((W * (Lambda @ X)) @ X.transpose(-1, -2))
-
-
-def solve_lambda_cg(X, M, W, max_iter=10):
-    b = -sym((W * M) @ X.transpose(-1, -2))
-    Lambda = torch.zeros_like(b)
-
-    R = b - A_op(Lambda, X, W)
-    R = sym(R)
-    P = R.clone()
-    rs_old = (R ** 2).sum(dim=(-2, -1), keepdim=True)
-
-
-    for _ in range(max_iter):
-        AP = A_op(P, X, W)
-        denom = (P * AP).sum(dim=(-2, -1), keepdim=True)
-        alpha = rs_old / (denom + 1e-10)
-        Lambda = Lambda + alpha * P
-        Lambda = sym(Lambda)
-        R = R - alpha * AP
-        R = sym(R)
-        rs_new = (R ** 2).sum(dim=(-2, -1), keepdim=True)
-        beta = rs_new / (rs_old + 1e-10)
-        P = R + beta * P
-        P = sym(P)
-        rs_old = rs_new
-
-    return sym(Lambda)
+from .ops import polar
+from .polar_taylor import stiefel_project, stiefel_update_taylor
 
 
 class SOOptimizer:
@@ -54,18 +12,15 @@ class SOOptimizer:
         self,
         param: torch.nn.Parameter,
         lr: float,
-        betas: tuple[float, float] = (0.9, 0.95),
-        eps: float = 1e-8,
+        beta1: float = 0.9,
         sub_matrix: int = 8,
-        project_last: bool = True,
-        retraction_type: str = "polar",
-        cg_steps: int = 3,
+        strict_stiefel: bool = True,
+        project_momentum: bool = False,
     ) -> None:
         self.param = param
         self.lr = lr
-        self.beta1, self.beta2 = betas
-        self.eps = eps
-        self.project_last = project_last
+        self.beta1 = beta1
+        self.strict_stiefel = strict_stiefel
 
         if dist.is_initialized():
             self.world_size = dist.get_world_size()
@@ -82,7 +37,6 @@ class SOOptimizer:
         self.local_slice = slice(self.rank * per_rank, (self.rank + 1) * per_rank)
 
         self.m = torch.zeros_like(param.data[self.local_slice])
-        self.v = torch.zeros_like(self.m)
         self.buffer = torch.zeros_like(param.data)
         self.step_count = torch.tensor(0.0, device=self.m.device)
 
@@ -92,29 +46,22 @@ class SOOptimizer:
 
         self.orth_dim = self.dim // sub_matrix
 
-        self.retraction_type = retraction_type
-        self.cg_steps = cg_steps
+        self.project_momentum = project_momentum
 
     def state_dict(self) -> dict:
         return {
             "m": self.m,
-            "v": self.v,
             "lr": self.lr,
             "beta1": self.beta1,
-            "beta2": self.beta2,
-            "eps": self.eps,
-            "project_last": self.project_last,
+            "strict_stiefel": self.strict_stiefel,
             "step_count": self.step_count,
         }
 
     def load_state_dict(self, state: dict) -> None:
         self.m = state.get("m", self.m).to(device=self.m.device, dtype=self.m.dtype)
-        self.v = state.get("v", self.v).to(device=self.v.device, dtype=self.v.dtype)
         self.lr = state.get("lr", self.lr)
         self.beta1 = state.get("beta1", self.beta1)
-        self.beta2 = state.get("beta2", self.beta2)
-        self.eps = state.get("eps", self.eps)
-        self.project_last = state.get("project_last", self.project_last)
+        self.strict_stiefel = state.get("strict_stiefel", self.strict_stiefel)
         self.step_count = state.get("step_count", self.step_count).to(
             device=self.step_count.device, dtype=self.step_count.dtype
         )
@@ -127,32 +74,19 @@ class SOOptimizer:
         self.step_count += 1
 
         x = self.param.data[self.local_slice]
-        grad = self.param.grad[self.local_slice]
-
-        self.m += (grad - self.m) * (1.0 - self.beta1)
-        self.v += (grad ** 2 - self.v) * (1.0 - self.beta2)
-
-        m_hat = self.m / (1.0 - self.beta1**self.step_count)
-        v_hat = self.v / (1.0 - self.beta2**self.step_count)
-
-
         x = x.reshape(-1, self.orth_dim, self.dim)
-        M = m_hat.reshape_as(x)
-        W = 1.0 / (v_hat.sqrt() + self.eps)
-        W = W.reshape_as(x)
 
-        Lambda = solve_lambda_cg(x, M, W, max_iter=self.cg_steps)
-        update = -lr * W * (M + Lambda @ x)
+        grad = self.param.grad[self.local_slice]
+        self.m.mul_(self.beta1).add_(grad, alpha=1 - self.beta1)
 
+        update = stiefel_project(x, self.m.reshape_as(x))
 
-        if self.retraction_type == "rotation":
-            new_x = update_fused(x, update)
-        elif self.retraction_type == "polar":
-            new_x = stiefel_update_taylor(x, update)
-        else:
-            raise NotImplementedError
+        if self.project_momentum:
+            self.m.copy_(update.reshape_as(self.m))
 
-        if is_last and self.project_last:
+        new_x = stiefel_update_taylor(x, update * -lr, projected=True)
+
+        if is_last and self.strict_stiefel:
             new_x = polar(new_x)
 
         new_x = new_x.reshape_as(self.m)
