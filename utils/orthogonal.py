@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import torch
 import torch.distributed as dist
+import torch.nn.functional as F
 
 from .ops import polar
 from .polar_taylor import stiefel_project, stiefel_update_taylor
@@ -83,6 +84,8 @@ class SOOptimizer:
 
         if self.project_momentum:
             self.m.copy_(update.reshape_as(self.m))
+
+        update = F.normalize(update, dim=(-1, -2)) * self.orth_dim**0.5
 
         new_x = stiefel_update_taylor(x, update * -lr, projected=True)
 
