@@ -1,35 +1,25 @@
 # ortho_llm
 
+Task 1
 
 ```
-bash run.sh all 1.0
-```
-
-```
-bash run.sh all 3.0
+bash run.sh all
 ```
 
 ```
-bash run.sh all 10.0
+bash run.sh atten
 ```
 
 ```
-bash run.sh all 30.0
+bash run.sh mlp
 ```
 
+Task 2
 
 ```
-bash run.sh all 1.0 true
-```
-
-```
-bash run.sh all 3.0 true
+bash run.sh all 0.5 1.0
 ```
 
 ```
-bash run.sh all 10.0 true
-```
-
-```
-bash run.sh all 30.0 true
+bash run.sh all 0.5 1.5
 ```
