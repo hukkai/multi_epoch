@@ -326,7 +326,7 @@ class ChunkedLlamaForCausalLMBase(nn.Module):
     def _init_chunk_weights(self) -> None:
         with torch.no_grad():
             weights = self.chunk_weights.data.to(dtype=torch.float32)
-            q, r = torch.linalg.qr(weights)
+            q, _ = torch.linalg.qr(weights)
             self.chunk_weights.data.copy_(q.to(dtype=self.chunk_weights.dtype))
 
     def forward(

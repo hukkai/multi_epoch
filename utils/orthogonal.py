@@ -16,7 +16,6 @@ class SOOptimizer:
         beta1: float = 0.9,
         sub_matrix: int = 8,
         strict_stiefel: bool = True,
-        project_momentum: bool = False,
     ) -> None:
         self.param = param
         self.lr = lr
@@ -47,7 +46,6 @@ class SOOptimizer:
 
         self.orth_dim = self.dim // sub_matrix
 
-        self.project_momentum = project_momentum
 
     def state_dict(self) -> dict:
         return {
@@ -81,9 +79,6 @@ class SOOptimizer:
         self.m.mul_(self.beta1).add_(grad, alpha=1 - self.beta1)
 
         update = stiefel_project(x, self.m.reshape_as(x))
-
-        if self.project_momentum:
-            self.m.copy_(update.reshape_as(self.m))
 
         update = F.normalize(update, dim=(-1, -2)) * self.orth_dim**0.5
 

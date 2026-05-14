@@ -62,13 +62,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--weight-decay", type=float, default=0.1)
     parser.add_argument("--clip-grad", type=float, default=1.0)
 
-    parser.add_argument("--so-lr", type=float, default=0.5)
+    parser.add_argument("--so-lr", type=float, default=1.0)
     parser.add_argument("--sub-matrix", type=int, default=16)
     parser.add_argument("--orth-beta1", type=float, default=0.9)
 
     parser.add_argument("--strict-stiefel-last", type=str2bool, default=True)
-    parser.add_argument("--project-momentum", type=str2bool, default=False)
-
 
     return parser.parse_args()
 
@@ -168,7 +166,6 @@ def main() -> None:
             beta1=args.orth_beta1,
             sub_matrix=args.sub_matrix,
             strict_stiefel=args.strict_stiefel_last,
-            project_momentum=args.project_momentum,
         )
 
     optimizer.zero_grad(set_to_none=True)
