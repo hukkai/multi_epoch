@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import math
+
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
 
 from .ops import polar
-from .polar_taylor import stiefel_project, stiefel_update_taylor
+from .polar_taylor import stiefel_update_taylor
 
 
 class SOOptimizer:
@@ -13,14 +15,15 @@ class SOOptimizer:
         self,
         param: torch.nn.Parameter,
         lr: float,
-        beta1: float = 0.9,
+        betas: tuple[float, float] = (0.9, 0.95),
+        eps: float = 1e-8,
         sub_matrix: int = 8,
         strict_stiefel: bool = True,
-        project_momentum: bool = False,
     ) -> None:
         self.param = param
         self.lr = lr
-        self.beta1 = beta1
+        self.beta1, self.beta2 = betas
+        self.eps = eps
         self.strict_stiefel = strict_stiefel
 
         if dist.is_initialized():
@@ -38,6 +41,7 @@ class SOOptimizer:
         self.local_slice = slice(self.rank * per_rank, (self.rank + 1) * per_rank)
 
         self.m = torch.zeros_like(param.data[self.local_slice])
+        self.v = torch.zeros_like(self.m)
         self.buffer = torch.zeros_like(param.data)
         self.step_count = torch.tensor(0.0, device=self.m.device)
 
@@ -47,21 +51,26 @@ class SOOptimizer:
 
         self.orth_dim = self.dim // sub_matrix
 
-        self.project_momentum = project_momentum
 
     def state_dict(self) -> dict:
         return {
             "m": self.m,
+            "v": self.v,
             "lr": self.lr,
             "beta1": self.beta1,
-            "strict_stiefel": self.strict_stiefel,
+            "beta2": self.beta2,
+            "eps": self.eps,
+            "project_last": self.project_last,
             "step_count": self.step_count,
         }
 
     def load_state_dict(self, state: dict) -> None:
         self.m = state.get("m", self.m).to(device=self.m.device, dtype=self.m.dtype)
+        self.v = state.get("v", self.v).to(device=self.v.device, dtype=self.v.dtype)
         self.lr = state.get("lr", self.lr)
         self.beta1 = state.get("beta1", self.beta1)
+        self.beta2 = state.get("beta2", self.beta2)
+        self.eps = state.get("eps", self.eps)
         self.strict_stiefel = state.get("strict_stiefel", self.strict_stiefel)
         self.step_count = state.get("step_count", self.step_count).to(
             device=self.step_count.device, dtype=self.step_count.dtype
@@ -75,19 +84,20 @@ class SOOptimizer:
         self.step_count += 1
 
         x = self.param.data[self.local_slice]
-        x = x.reshape(-1, self.orth_dim, self.dim)
-
         grad = self.param.grad[self.local_slice]
-        self.m.mul_(self.beta1).add_(grad, alpha=1 - self.beta1)
 
-        update = stiefel_project(x, self.m.reshape_as(x))
+        self.m += (grad - self.m) * (1.0 - self.beta1)
+        self.v += (grad ** 2 - self.v) * (1.0 - self.beta2)
 
-        if self.project_momentum:
-            self.m.copy_(update.reshape_as(self.m))
+        m_hat = self.m / (1.0 - self.beta1**self.step_count)
+        v_hat = self.v / (1.0 - self.beta2**self.step_count)
 
-        update = F.normalize(update, dim=(-1, -2)) * self.orth_dim**0.5
 
-        new_x = stiefel_update_taylor(x, update * -lr, projected=True)
+        x = x.reshape(-1, self.orth_dim, self.dim)
+        update = -lr * m_hat / (v_hat.sqrt() + self.eps)
+        update = update.reshape_as(x)
+
+        new_x = stiefel_update_taylor(x, update)
 
         if is_last and self.strict_stiefel:
             new_x = polar(new_x)
