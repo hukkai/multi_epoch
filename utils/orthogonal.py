@@ -6,47 +6,8 @@ import torch
 import torch.distributed as dist
 import torch.nn.functional as F
 
-from .ops import polar #, fast_exp_action
-from .fuse_ops import update_fused
+from .ops import polar
 from .polar_taylor import stiefel_update_taylor
-
-
-def sym(A):
-    return 0.5 * (A + A.transpose(-1, -2))
-
-
-def A_op(Lambda, X, W):
-    # Lambda: n x n symmetric
-    # X: n x m
-    # W: n x m, W = 1 / (sqrt(v) + eps)
-    return sym((W * (Lambda @ X)) @ X.transpose(-1, -2))
-
-
-def solve_lambda_cg(X, M, W, max_iter=10):
-    b = -sym((W * M) @ X.transpose(-1, -2))
-    Lambda = torch.zeros_like(b)
-
-    R = b - A_op(Lambda, X, W)
-    R = sym(R)
-    P = R.clone()
-    rs_old = (R ** 2).sum(dim=(-2, -1), keepdim=True)
-
-
-    for _ in range(max_iter):
-        AP = A_op(P, X, W)
-        denom = (P * AP).sum(dim=(-2, -1), keepdim=True)
-        alpha = rs_old / (denom + 1e-10)
-        Lambda = Lambda + alpha * P
-        Lambda = sym(Lambda)
-        R = R - alpha * AP
-        R = sym(R)
-        rs_new = (R ** 2).sum(dim=(-2, -1), keepdim=True)
-        beta = rs_new / (rs_old + 1e-10)
-        P = R + beta * P
-        P = sym(P)
-        rs_old = rs_new
-
-    return sym(Lambda)
 
 
 class SOOptimizer:
@@ -57,15 +18,13 @@ class SOOptimizer:
         betas: tuple[float, float] = (0.9, 0.95),
         eps: float = 1e-8,
         sub_matrix: int = 8,
-        project_last: bool = True,
-        retraction_type: str = "polar",
-        cg_steps: int = 3,
+        strict_stiefel: bool = True,
     ) -> None:
         self.param = param
         self.lr = lr
         self.beta1, self.beta2 = betas
         self.eps = eps
-        self.project_last = project_last
+        self.strict_stiefel = strict_stiefel
 
         if dist.is_initialized():
             self.world_size = dist.get_world_size()
@@ -92,8 +51,6 @@ class SOOptimizer:
 
         self.orth_dim = self.dim // sub_matrix
 
-        self.retraction_type = retraction_type
-        self.cg_steps = cg_steps
 
     def state_dict(self) -> dict:
         return {
@@ -137,22 +94,12 @@ class SOOptimizer:
 
 
         x = x.reshape(-1, self.orth_dim, self.dim)
-        M = m_hat.reshape_as(x)
-        W = 1.0 / (v_hat.sqrt() + self.eps)
-        W = W.reshape_as(x)
+        update = -lr * m_hat / (v_hat.sqrt() + self.eps)
+        update = update.reshape_as(x)
 
-        Lambda = solve_lambda_cg(x, M, W, max_iter=self.cg_steps)
-        update = -lr * W * (M + Lambda @ x)
+        new_x = stiefel_update_taylor(x, update)
 
-
-        if self.retraction_type == "rotation":
-            new_x = update_fused(x, update)
-        elif self.retraction_type == "polar":
-            new_x = stiefel_update_taylor(x, update)
-        else:
-            raise NotImplementedError
-
-        if is_last and self.project_last:
+        if is_last and self.strict_stiefel:
             new_x = polar(new_x)
 
         new_x = new_x.reshape_as(self.m)

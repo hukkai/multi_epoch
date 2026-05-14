@@ -2,7 +2,6 @@
 export MASTER_PORT=$((12000 + RANDOM % 20000))
 
 ORTH_TYPE=${1:-all}
-CG_STEPS=${2:-3}
 
 
 OMP_NUM_THREADS=1 torchrun \
@@ -21,5 +20,4 @@ OMP_NUM_THREADS=1 torchrun \
     --so-lr 1.0 \
     --num-steps 50_000 \
     --orthogonal-type "${ORTH_TYPE}" \
-    --sub-matrix 96 \
-    --cg-steps "${CG_STEPS}"
+    --sub-matrix 96
