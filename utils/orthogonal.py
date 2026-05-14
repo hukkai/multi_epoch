@@ -71,7 +71,7 @@ class SOOptimizer:
         self.beta1 = state.get("beta1", self.beta1)
         self.beta2 = state.get("beta2", self.beta2)
         self.eps = state.get("eps", self.eps)
-        self.project_last = state.get("project_last", self.project_last)
+        self.strict_stiefel = state.get("strict_stiefel", self.strict_stiefel)
         self.step_count = state.get("step_count", self.step_count).to(
             device=self.step_count.device, dtype=self.step_count.dtype
         )
