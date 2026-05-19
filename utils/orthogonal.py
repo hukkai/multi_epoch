@@ -4,10 +4,9 @@ import math
 
 import torch
 import torch.distributed as dist
-import torch.nn.functional as F
 
-from .ops import polar
-from .polar_taylor import stiefel_update_taylor
+
+from .polar_taylor import orthogonal_rows_update_taylor, orthogonal_rows_exact
 
 
 class SOOptimizer:
@@ -19,12 +18,14 @@ class SOOptimizer:
         eps: float = 1e-8,
         sub_matrix: int = 8,
         strict_stiefel: bool = True,
+        weight_decay: float = 0.1,
     ) -> None:
         self.param = param
         self.lr = lr
         self.beta1, self.beta2 = betas
         self.eps = eps
         self.strict_stiefel = strict_stiefel
+        self.weight_decay = weight_decay
 
         if dist.is_initialized():
             self.world_size = dist.get_world_size()
@@ -60,7 +61,8 @@ class SOOptimizer:
             "beta1": self.beta1,
             "beta2": self.beta2,
             "eps": self.eps,
-            "project_last": self.project_last,
+            "strict_stiefel": self.strict_stiefel,
+            "weight_decay": self.weight_decay,
             "step_count": self.step_count,
         }
 
@@ -72,6 +74,7 @@ class SOOptimizer:
         self.beta2 = state.get("beta2", self.beta2)
         self.eps = state.get("eps", self.eps)
         self.strict_stiefel = state.get("strict_stiefel", self.strict_stiefel)
+        self.weight_decay = state.get("weight_decay", self.weight_decay)
         self.step_count = state.get("step_count", self.step_count).to(
             device=self.step_count.device, dtype=self.step_count.dtype
         )
@@ -92,15 +95,18 @@ class SOOptimizer:
         m_hat = self.m / (1.0 - self.beta1**self.step_count)
         v_hat = self.v / (1.0 - self.beta2**self.step_count)
 
-
+        delta = m_hat / (v_hat.sqrt() + self.eps) + self.weight_decay * x
         x = x.reshape(-1, self.orth_dim, self.dim)
-        update = -lr * m_hat / (v_hat.sqrt() + self.eps)
-        update = update.reshape_as(x)
+        update = (-lr * delta).reshape_as(x)
 
-        new_x = stiefel_update_taylor(x, update)
+        new_x = orthogonal_rows_update_taylor(
+            x,
+            update,
+            min_norm=0.5,
+        )
 
         if is_last and self.strict_stiefel:
-            new_x = polar(new_x)
+            new_x = orthogonal_rows_exact(new_x)
 
         new_x = new_x.reshape_as(self.m)
 

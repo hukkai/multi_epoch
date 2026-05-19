@@ -134,3 +134,163 @@ def stiefel_update_taylor(
         taylor4_max_err=taylor4_max_err,
     )
 
+
+def _offdiag(matrix: torch.Tensor) -> torch.Tensor:
+    return matrix - torch.diag_embed(matrix.diagonal(dim1=-2, dim2=-1))
+
+
+def orthogonal_rows_project(
+    x: torch.Tensor,
+    update: torch.Tensor,
+    min_norm: float = 1.0,
+    active_tol: float = 1e-6,
+    eps: float = 1e-12,
+    clip_boundary: bool = True,
+) -> torch.Tensor:
+    """
+    Project update onto the tangent cone of
+
+        offdiag(X X^T) = 0,
+        ||row_i(X)|| >= min_norm.
+
+    x/update shape: (b, n, m), n <= m.
+    """
+    _validate_shape(x)
+
+    if update.shape != x.shape:
+        raise ValueError(f"update shape {tuple(update.shape)} must match x shape {tuple(x.shape)}")
+
+    work_dtype = torch.promote_types(_screen_dtype(x.dtype), _screen_dtype(update.dtype))
+    xw = x.to(work_dtype)
+    uw = update.to(work_dtype)
+
+    # d_i = ||x_i||^2, shape (b, n)
+    d = (xw * xw).sum(dim=-1)
+
+    # A = U X^T, shape (b, n, n)
+    a = uw @ xw.transpose(-1, -2)
+
+    # Lambda_ij = (A_ij + A_ji) / (d_i + d_j), i != j
+    denom = d.unsqueeze(-1) + d.unsqueeze(-2)
+    lam = (a + a.transpose(-1, -2)) / denom.clamp_min(eps)
+    lam = _offdiag(lam)
+
+    z = uw - lam @ xw
+
+    if clip_boundary:
+        # At active rows ||x_i|| ~= min_norm, forbid inward radial movement.
+        radial_dot = (z * xw).sum(dim=-1, keepdim=True)
+        active = d.unsqueeze(-1) <= (min_norm + active_tol) ** 2
+        inward = radial_dot < 0
+
+        radial_component = radial_dot / d.clamp_min(eps).unsqueeze(-1) * xw
+        z = torch.where(active & inward, z - radial_component, z)
+
+    return z.to(update.dtype)
+
+
+@torch.no_grad()
+def orthogonal_rows_retract(
+    x: torch.Tensor,
+    update: torch.Tensor,
+    min_norm: float = 1.0,
+    tolerance: float = 1e-5,
+    eps: float = 1e-10,
+    taylor2_max_err: float = TAYLOR2_MAX_ERR,
+    taylor3_max_err: float = TAYLOR3_MAX_ERR,
+    taylor4_max_err: float = TAYLOR4_MAX_ERR,
+) -> torch.Tensor:
+    """
+    Product retraction for X = diag(s) Q, s_i >= min_norm, Q Q^T = I.
+
+    This preserves scale and direction to first order, without forcing s_i = 1.
+    """
+    _validate_shape(x)
+
+    if update.shape != x.shape:
+        raise ValueError(f"update shape {tuple(update.shape)} must match x shape {tuple(x.shape)}")
+
+    work_dtype = torch.promote_types(_screen_dtype(x.dtype), _screen_dtype(update.dtype))
+    xw = x.to(work_dtype)
+    zw = update.to(work_dtype)
+
+    s = torch.linalg.vector_norm(xw, dim=-1, keepdim=True).clamp_min(eps)
+    q = xw / s
+
+    # ds_i = <z_i, q_i>
+    ds = (zw * q).sum(dim=-1, keepdim=True)
+
+    # Directional update on row-Stiefel.
+    h = (zw - ds * q) / s
+
+    q_new = fast_polar(
+        q + h,
+        tolerance=tolerance,
+        eps=eps,
+        taylor2_max_err=taylor2_max_err,
+        taylor3_max_err=taylor3_max_err,
+        taylor4_max_err=taylor4_max_err,
+    )
+
+    s_new = (s + ds).clamp_min(min_norm)
+
+    return (s_new * q_new).to(x.dtype)
+
+
+@torch.no_grad()
+def orthogonal_rows_exact(
+    a: torch.Tensor,
+    min_norm: float = 1.0,
+    eps: float = 1e-10,
+) -> torch.Tensor:
+    """
+    Exact correction onto:
+        offdiag(X X^T) = 0,
+        ||row_i(X)|| >= min_norm.
+
+    This is the replacement for exact polar(new_x).
+    """
+    _validate_shape(a)
+
+    work_dtype = _screen_dtype(a.dtype)
+    aw = a.to(work_dtype)
+
+    s = torch.linalg.vector_norm(aw, dim=-1, keepdim=True).clamp_min(min_norm)
+    q0 = aw / s.clamp_min(eps)
+
+    q = exact_polar(q0, tolerance=0.0, eps=eps)
+
+    return (s * q).to(a.dtype)
+
+
+@torch.no_grad()
+def orthogonal_rows_update_taylor(
+    x: torch.Tensor,
+    update: torch.Tensor,
+    min_norm: float = 1.0,
+    tolerance: float = 1e-5,
+    eps: float = 1e-10,
+    taylor2_max_err: float = TAYLOR2_MAX_ERR,
+    taylor3_max_err: float = TAYLOR3_MAX_ERR,
+    taylor4_max_err: float = TAYLOR4_MAX_ERR,
+    projected: bool = False,
+) -> torch.Tensor:
+    if not projected:
+        update = orthogonal_rows_project(
+            x,
+            update,
+            min_norm=min_norm,
+            eps=eps,
+            clip_boundary=True,
+        )
+
+    return orthogonal_rows_retract(
+        x,
+        update,
+        min_norm=min_norm,
+        tolerance=tolerance,
+        eps=eps,
+        taylor2_max_err=taylor2_max_err,
+        taylor3_max_err=taylor3_max_err,
+        taylor4_max_err=taylor4_max_err,
+    )

@@ -63,7 +63,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--clip-grad", type=float, default=1.0)
 
     parser.add_argument("--so-lr", type=float, default=1.0)
-    parser.add_argument("--min-so-lr", type=float, default=1.0)
     parser.add_argument("--sub-matrix", type=int, default=16)
     parser.add_argument("--orth-beta1", type=float, default=0.9)
     parser.add_argument("--orth-beta2", type=float, default=0.95)
@@ -169,6 +168,7 @@ def main() -> None:
             eps=args.orth_eps,
             sub_matrix=args.sub_matrix,
             strict_stiefel=args.strict_stiefel_last,
+            weight_decay=args.weight_decay,
         )
 
     optimizer.zero_grad(set_to_none=True)
@@ -213,8 +213,7 @@ def main() -> None:
         is_last_step = (step + 1) % strict_stiefel_steps == 0
 
         if orth_opt is not None:
-            so_lr = (args.so_lr - args.min_so_lr) * step / args.num_steps + args.min_so_lr
-            orth_opt.step(lr=lr * so_lr, is_last=is_last_step)
+            orth_opt.step(lr=lr * args.so_lr, is_last=is_last_step)
 
         optimizer.step()
         optimizer.zero_grad(set_to_none=True)

@@ -2,8 +2,9 @@
 export MASTER_PORT=$((12000 + RANDOM % 20000))
 
 ORTH_TYPE=${1:-all}
-MIN_SO_LR=${2:-1.0}
-SO_LR=${3:-1.0}
+WEIGHT_DECAY=${2:-0.1}
+SUB_MATRIX=${3:-96}
+SO_LR=${4:-1.0}
 
 
 OMP_NUM_THREADS=1 torchrun \
@@ -19,8 +20,8 @@ OMP_NUM_THREADS=1 torchrun \
     --seq-length 2048 \
     --lr 1.2e-3 \
     --min-lr 1.2e-5 \
-    --min-so-lr ${MIN_SO_LR} \
     --so-lr ${SO_LR} \
     --num-steps 50_000 \
     --orthogonal-type "${ORTH_TYPE}" \
-    --sub-matrix 96
+    --sub-matrix ${SUB_MATRIX} \
+    --weight-decay ${WEIGHT_DECAY}
