@@ -106,7 +106,7 @@ class SOOptimizer:
         )
 
         if is_last and self.strict_stiefel:
-            new_x = orthogonal_rows_exact(new_x)
+            new_x = orthogonal_rows_exact(new_x, min_norm=0.5)
 
         new_x = new_x.reshape_as(self.m)
 
