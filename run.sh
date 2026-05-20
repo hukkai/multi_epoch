@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 export MASTER_PORT=$((12000 + RANDOM % 20000))
 
-ORTH_TYPE=${1:-all}
-WEIGHT_DECAY=${2:-0.1}
-SUB_MATRIX=${3:-96}
-SO_LR=${4:-1.0}
+SUB_MATRIX=${1:-96}
+MIN_NORM=${2:-0.9}
+MAX_NORM=${3:-1.11}
+WEIGHT_DECAY=${4:-0.1}
+SO_LR=${5:-1.0}
 
 
 OMP_NUM_THREADS=1 torchrun \
@@ -22,6 +23,8 @@ OMP_NUM_THREADS=1 torchrun \
     --min-lr 1.2e-5 \
     --so-lr ${SO_LR} \
     --num-steps 50_000 \
-    --orthogonal-type "${ORTH_TYPE}" \
+    --orthogonal-type all \
     --sub-matrix ${SUB_MATRIX} \
-    --weight-decay ${WEIGHT_DECAY}
+    --weight-decay ${WEIGHT_DECAY} \
+    --orth-min-norm ${MIN_NORM} \
+    --orth-max-norm ${MAX_NORM}

@@ -139,10 +139,25 @@ def _offdiag(matrix: torch.Tensor) -> torch.Tensor:
     return matrix - torch.diag_embed(matrix.diagonal(dim1=-2, dim2=-1))
 
 
+def _validate_norm_bounds(min_norm: float, max_norm: float | None) -> None:
+    if min_norm < 0:
+        raise ValueError(f"min_norm must be non-negative, got {min_norm}")
+    if max_norm is not None and max_norm < min_norm:
+        raise ValueError(f"max_norm must be >= min_norm, got {max_norm} < {min_norm}")
+
+
+def _clamp_row_norm(norm: torch.Tensor, min_norm: float, max_norm: float | None) -> torch.Tensor:
+    norm = norm.clamp_min(min_norm)
+    if max_norm is not None:
+        norm = norm.clamp_max(max_norm)
+    return norm
+
+
 def orthogonal_rows_project(
     x: torch.Tensor,
     update: torch.Tensor,
     min_norm: float = 1.0,
+    max_norm: float | None = None,
     active_tol: float = 1e-6,
     eps: float = 1e-12,
     clip_boundary: bool = True,
@@ -151,11 +166,12 @@ def orthogonal_rows_project(
     Project update onto the tangent cone of
 
         offdiag(X X^T) = 0,
-        ||row_i(X)|| >= min_norm.
+        min_norm <= ||row_i(X)|| <= max_norm.
 
     x/update shape: (b, n, m), n <= m.
     """
     _validate_shape(x)
+    _validate_norm_bounds(min_norm, max_norm)
 
     if update.shape != x.shape:
         raise ValueError(f"update shape {tuple(update.shape)} must match x shape {tuple(x.shape)}")
@@ -178,13 +194,21 @@ def orthogonal_rows_project(
     z = uw - lam @ xw
 
     if clip_boundary:
-        # At active rows ||x_i|| ~= min_norm, forbid inward radial movement.
+        # At active norm bounds, remove radial movement that points outside the feasible interval.
         radial_dot = (z * xw).sum(dim=-1, keepdim=True)
-        active = d.unsqueeze(-1) <= (min_norm + active_tol) ** 2
-        inward = radial_dot < 0
+        lower_active = d.unsqueeze(-1) <= (min_norm + active_tol) ** 2
+        lower_inward = radial_dot < 0
+
+        if max_norm is None:
+            clip_radial = lower_active & lower_inward
+        else:
+            upper_threshold = max(max_norm - active_tol, 0.0) ** 2
+            upper_active = d.unsqueeze(-1) >= upper_threshold
+            upper_outward = radial_dot > 0
+            clip_radial = (lower_active & lower_inward) | (upper_active & upper_outward)
 
         radial_component = radial_dot / d.clamp_min(eps).unsqueeze(-1) * xw
-        z = torch.where(active & inward, z - radial_component, z)
+        z = torch.where(clip_radial, z - radial_component, z)
 
     return z.to(update.dtype)
 
@@ -194,6 +218,7 @@ def orthogonal_rows_retract(
     x: torch.Tensor,
     update: torch.Tensor,
     min_norm: float = 1.0,
+    max_norm: float | None = None,
     tolerance: float = 1e-5,
     eps: float = 1e-10,
     taylor2_max_err: float = TAYLOR2_MAX_ERR,
@@ -201,11 +226,12 @@ def orthogonal_rows_retract(
     taylor4_max_err: float = TAYLOR4_MAX_ERR,
 ) -> torch.Tensor:
     """
-    Product retraction for X = diag(s) Q, s_i >= min_norm, Q Q^T = I.
+    Product retraction for X = diag(s) Q, min_norm <= s_i <= max_norm, Q Q^T = I.
 
     This preserves scale and direction to first order, without forcing s_i = 1.
     """
     _validate_shape(x)
+    _validate_norm_bounds(min_norm, max_norm)
 
     if update.shape != x.shape:
         raise ValueError(f"update shape {tuple(update.shape)} must match x shape {tuple(x.shape)}")
@@ -232,7 +258,7 @@ def orthogonal_rows_retract(
         taylor4_max_err=taylor4_max_err,
     )
 
-    s_new = (s + ds).clamp_min(min_norm)
+    s_new = _clamp_row_norm(s + ds, min_norm, max_norm)
 
     return (s_new * q_new).to(x.dtype)
 
@@ -241,21 +267,23 @@ def orthogonal_rows_retract(
 def orthogonal_rows_exact(
     a: torch.Tensor,
     min_norm: float = 1.0,
+    max_norm: float | None = None,
     eps: float = 1e-10,
 ) -> torch.Tensor:
     """
     Exact correction onto:
         offdiag(X X^T) = 0,
-        ||row_i(X)|| >= min_norm.
+        min_norm <= ||row_i(X)|| <= max_norm.
 
     This is the replacement for exact polar(new_x).
     """
     _validate_shape(a)
+    _validate_norm_bounds(min_norm, max_norm)
 
     work_dtype = _screen_dtype(a.dtype)
     aw = a.to(work_dtype)
 
-    s = torch.linalg.vector_norm(aw, dim=-1, keepdim=True).clamp_min(min_norm)
+    s = _clamp_row_norm(torch.linalg.vector_norm(aw, dim=-1, keepdim=True), min_norm, max_norm)
     q0 = aw / s.clamp_min(eps)
 
     q = exact_polar(q0, tolerance=0.0, eps=eps)
@@ -268,6 +296,7 @@ def orthogonal_rows_update_taylor(
     x: torch.Tensor,
     update: torch.Tensor,
     min_norm: float = 1.0,
+    max_norm: float | None = None,
     tolerance: float = 1e-5,
     eps: float = 1e-10,
     taylor2_max_err: float = TAYLOR2_MAX_ERR,
@@ -275,11 +304,14 @@ def orthogonal_rows_update_taylor(
     taylor4_max_err: float = TAYLOR4_MAX_ERR,
     projected: bool = False,
 ) -> torch.Tensor:
+    _validate_norm_bounds(min_norm, max_norm)
+
     if not projected:
         update = orthogonal_rows_project(
             x,
             update,
             min_norm=min_norm,
+            max_norm=max_norm,
             eps=eps,
             clip_boundary=True,
         )
@@ -288,6 +320,7 @@ def orthogonal_rows_update_taylor(
         x,
         update,
         min_norm=min_norm,
+        max_norm=max_norm,
         tolerance=tolerance,
         eps=eps,
         taylor2_max_err=taylor2_max_err,

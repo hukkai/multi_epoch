@@ -67,6 +67,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--orth-beta1", type=float, default=0.9)
     parser.add_argument("--orth-beta2", type=float, default=0.95)
     parser.add_argument("--orth-eps", type=float, default=1e-8)
+    parser.add_argument("--orth-min-norm", type=float, default=0.5)
+    parser.add_argument("--orth-max-norm", type=float, default=None)
     parser.add_argument("--strict-stiefel-last", type=str2bool, default=True)
 
     return parser.parse_args()
@@ -169,6 +171,8 @@ def main() -> None:
             sub_matrix=args.sub_matrix,
             strict_stiefel=args.strict_stiefel_last,
             weight_decay=args.weight_decay,
+            min_norm=args.orth_min_norm,
+            max_norm=args.orth_max_norm,
         )
 
     optimizer.zero_grad(set_to_none=True)
