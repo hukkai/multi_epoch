@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 export MASTER_PORT=$((12000 + RANDOM % 20000))
 
-SUB_MATRIX=${1:-96}
-MIN_NORM=${2:-0.9}
-MAX_NORM=${3:-1.11}
-WEIGHT_DECAY=${4:-0.1}
-SO_LR=${5:-1.0}
+ORTH_TYPE=${1:-all}
+NUM_SUBMATRICES=${2:-64}
+SO_LR=${3:-1.0}
+USE_AFFINE1=${4:-true}
+USE_AFFINE2=${5:-true}
 
 
 OMP_NUM_THREADS=1 torchrun \
@@ -13,9 +13,9 @@ OMP_NUM_THREADS=1 torchrun \
     --master_port "${MASTER_PORT}" \
     train.py \
     --data-dir ./data/C4-50B/ \
-    --num-layers 18 \
-    --hidden-size 1536 \
-    --num-heads 24 \
+    --num-layers 24 \
+    --hidden-size 1280 \
+    --num-heads 16 \
     --batch-size 16 \
     --global-batch-size 512 \
     --seq-length 2048 \
@@ -23,8 +23,7 @@ OMP_NUM_THREADS=1 torchrun \
     --min-lr 1.2e-5 \
     --so-lr ${SO_LR} \
     --num-steps 50_000 \
-    --orthogonal-type all \
-    --sub-matrix ${SUB_MATRIX} \
-    --weight-decay ${WEIGHT_DECAY} \
-    --orth-min-norm ${MIN_NORM} \
-    --orth-max-norm ${MAX_NORM}
+    --orthogonal-type ${ORTH_TYPE} \
+    --num-submatrices ${NUM_SUBMATRICES} \
+    --use-affine1 ${USE_AFFINE1} \
+    --use-affine2 ${USE_AFFINE2}

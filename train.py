@@ -44,14 +44,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--hidden-size", type=int, default=3072)
     parser.add_argument("--num-layers", type=int, default=28)
     parser.add_argument("--num-heads", type=int, default=24)
-    parser.add_argument("--mlp-ratio", type=int, default=4)
+    parser.add_argument("--mlp-ratio", type=int, default=3)
     parser.add_argument("--max-position-embeddings", type=int, default=2048)
     parser.add_argument("--vocab-size", type=int, default=32000)
     parser.add_argument("--rope-theta", type=float, default=10000.0)
     parser.add_argument("--rms-norm-eps", type=float, default=1e-6)
-    parser.add_argument("--hidden-dropout", type=float, default=0.0)
     parser.add_argument("--attention-dropout", type=float, default=0.0)
-    parser.add_argument("--tie-word-embeddings", action="store_true")
+    parser.add_argument("--tie-word-embeddings", type=str2bool, default=True)
 
     parser.add_argument("--batch-size", type=int, default=4, help="Micro-batch size per rank")
     parser.add_argument("--global-batch-size", type=int, default=512)
@@ -63,13 +62,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--clip-grad", type=float, default=1.0)
 
     parser.add_argument("--so-lr", type=float, default=1.0)
-    parser.add_argument("--sub-matrix", type=int, default=16)
+    parser.add_argument("--num-submatrices", type=int, default=16)
     parser.add_argument("--orth-beta1", type=float, default=0.9)
     parser.add_argument("--orth-beta2", type=float, default=0.95)
     parser.add_argument("--orth-eps", type=float, default=1e-8)
-    parser.add_argument("--orth-min-norm", type=float, default=0.5)
-    parser.add_argument("--orth-max-norm", type=float, default=None)
     parser.add_argument("--strict-stiefel-last", type=str2bool, default=True)
+    parser.add_argument("--use-affine1", type=str2bool, default=True)
+    parser.add_argument("--use-affine2", type=str2bool, default=True)
 
     return parser.parse_args()
 
@@ -97,7 +96,6 @@ def build_config(args: argparse.Namespace) -> LlamaConfig:
         rope_theta=args.rope_theta,
         rms_norm_eps=args.rms_norm_eps,
         attention_dropout=args.attention_dropout,
-        hidden_dropout=args.hidden_dropout,
         tie_word_embeddings=args.tie_word_embeddings,
     )
 
@@ -161,6 +159,8 @@ def main() -> None:
             config,
             orthogonal_type=args.orthogonal_type,
             init_chunk_weights=init_chunk_weights,
+            use_affine1=args.use_affine1,
+            use_affine2=args.use_affine2,
         )
     model = model.to(device)
     if distributed:
@@ -175,11 +175,8 @@ def main() -> None:
             lr=args.lr * args.so_lr,
             betas=(args.orth_beta1, args.orth_beta2),
             eps=args.orth_eps,
-            sub_matrix=args.sub_matrix,
-            strict_stiefel=args.strict_stiefel_last,
-            weight_decay=args.weight_decay,
-            min_norm=args.orth_min_norm,
-            max_norm=args.orth_max_norm,
+            num_submatrices=args.num_submatrices,
+            strict_stiefel=args.strict_stiefel_last
         )
 
     optimizer.zero_grad(set_to_none=True)
@@ -188,6 +185,8 @@ def main() -> None:
     start_micro_step = 0
 
     warmup_steps = int(args.num_steps * 0.01)
+    local_loss = torch.tensor(0.0, device=device)
+
     for micro_step in range(start_micro_step, total_micro_steps):
         step = micro_step // accum_steps
         lr = cosine_lr(step, args.num_steps, warmup_steps, args.lr, args.min_lr)
@@ -211,10 +210,17 @@ def main() -> None:
                 loss = output["loss"]
             (loss / accum_steps).backward()
 
-        loss_meter.update(loss.item(), input_ids.size(0))
+        local_loss += loss.detach() / accum_steps
 
         if not should_sync:
             continue
+
+        if distributed:
+            dist.all_reduce(local_loss, op=dist.ReduceOp.SUM)
+            local_loss /= world_size
+
+        loss_meter.update(local_loss.item(), input_ids.size(0) * accum_steps)
+        local_loss.zero_()
 
         if args.clip_grad and args.clip_grad > 0:
             torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip_grad)

@@ -17,7 +17,7 @@ class SOOptimizer:
         lr: float,
         betas: tuple[float, float] = (0.9, 0.95),
         eps: float = 1e-8,
-        sub_matrix: int = 8,
+        num_submatrices: int = 8,
         strict_stiefel: bool = True,
     ) -> None:
         self.param = param
@@ -46,10 +46,10 @@ class SOOptimizer:
         self.step_count = torch.tensor(0.0, device=self.m.device)
 
         self.dim = self.m.shape[1]
-        if self.dim % sub_matrix != 0:
-            raise ValueError(f"Matrix dim {self.dim} must be divisible by sub_matrix {sub_matrix}")
+        if self.dim % num_submatrices != 0:
+            raise ValueError(f"Matrix dim {self.dim} must be divisible by num_submatrices {num_submatrices}")
 
-        self.orth_dim = self.dim // sub_matrix
+        self.orth_dim = self.dim // num_submatrices
 
 
     def step(self, lr: float | None = None, is_last: bool = False) -> None:

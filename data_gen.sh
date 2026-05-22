@@ -8,5 +8,5 @@ for r in 0 1 2 3 4 5 6 7; do
     --num-shards 8 \
     --num-documents 10000000 \
     --num-workers 8 \
-    --output-dir data/C4
+    --output-dir data/C4-50B/
 done

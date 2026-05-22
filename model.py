@@ -13,12 +13,11 @@ class LlamaConfig:
     hidden_size: int = 512
     num_layers: int = 8
     num_heads: int = 8
-    mlp_ratio: int = 4
+    mlp_ratio: int = 3
     max_position_embeddings: int = 2048
     rope_theta: float = 10000.0
     rms_norm_eps: float = 1e-6
     attention_dropout: float = 0.0
-    hidden_dropout: float = 0.0
     tie_word_embeddings: bool = False
 
     def __post_init__(self) -> None:
@@ -154,18 +153,17 @@ class ChunkedAttention(nn.Module):
 
 
 class MLP(nn.Module):
+
     def __init__(self, config: LlamaConfig) -> None:
         super().__init__()
-        self.fc1 = nn.Linear(config.hidden_size, config.intermediate_size, bias=False)
-        self.fc2 = nn.Linear(config.intermediate_size, config.hidden_size, bias=False)
-        self.dropout = nn.Dropout(config.hidden_dropout)
+        self.gate_proj = nn.Linear(config.hidden_size, config.intermediate_size, bias=False)
+        self.up_proj = nn.Linear(config.hidden_size, config.intermediate_size, bias=False)
+        self.down_proj = nn.Linear(config.intermediate_size, config.hidden_size, bias=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.fc1(x)
-        x = F.silu(x)
-        x = self.dropout(x)
-        x = self.fc2(x)
-        return self.dropout(x)
+        return self.down_proj(
+            F.silu(self.gate_proj(x)) * self.up_proj(x)
+        )
 
 
 class ChunkedMLP(nn.Module):
@@ -173,18 +171,18 @@ class ChunkedMLP(nn.Module):
         super().__init__()
         self.r = config.mlp_ratio
         self.hidden_size = config.hidden_size
-        self.dropout = nn.Dropout(config.hidden_dropout)
 
     def forward(self, x: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
-        w1_rcc, w2_rcc = torch.split(weights, [self.r, self.r], dim=0)
-        w1 = w1_rcc.reshape(self.r * self.hidden_size, self.hidden_size)
-        w2 = w2_rcc.reshape(self.r * self.hidden_size, self.hidden_size).T
+        gate_rcc, up_rcc, down_rcc = torch.split(weights, [self.r, self.r, self.r], dim=0)
 
-        x = F.linear(x, w1)
-        x = F.silu(x)
-        x = self.dropout(x)
-        x = F.linear(x, w2)
-        return self.dropout(x)
+        gate_w = gate_rcc.reshape(self.r * self.hidden_size, self.hidden_size)
+        up_w = up_rcc.reshape(self.r * self.hidden_size, self.hidden_size)
+        down_w = down_rcc.reshape(self.r * self.hidden_size, self.hidden_size).T
+
+        x = F.silu(F.linear(x, gate_w)) * F.linear(x, up_w)
+        x = F.linear(x, down_w)
+
+        return x
 
 
 class LlamaBlock(nn.Module):
@@ -210,7 +208,7 @@ class ChunkedBlock(nn.Module):
         self.mlp = ChunkedMLP(config)
 
     def forward(self, x: torch.Tensor, weights: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
-        attn_weights, mlp_weights = torch.split(weights, [4, 2 * self.mlp.r], dim=0)
+        attn_weights, mlp_weights = torch.split(weights, [4, 3 * self.mlp.r], dim=0)
         x = x + self.self_attn(self.input_layernorm(x), attn_weights, cos, sin)
         x = x + self.mlp(self.post_attention_layernorm(x), mlp_weights)
         return x
@@ -296,6 +294,8 @@ class ChunkedLlamaForCausalLMBase(nn.Module):
         block_cls: type[nn.Module],
         num_matrix: int,
         init_chunk_weights: bool = True,
+        use_affine1: bool = True,
+        use_affine2: bool = True
     ) -> None:
         super().__init__()
         self.config = config
@@ -315,8 +315,14 @@ class ChunkedLlamaForCausalLMBase(nn.Module):
         if init_chunk_weights:
             chunk_weights.normal_(mean=0.0, std=hidden_size**-0.5)
         self.chunk_weights = nn.Parameter(chunk_weights)
-        self.chunk_affine1 = nn.Parameter(torch.zeros(total_chunks, hidden_size, 1))
-        self.chunk_affine2 = nn.Parameter(torch.zeros(total_chunks, 1, hidden_size))
+        
+        self.chunk_affine1 = 0
+        self.chunk_affine2 = 0
+
+        if use_affine1:
+            self.chunk_affine1 = nn.Parameter(torch.zeros(total_chunks, hidden_size, 1))
+        if use_affine2:
+            self.chunk_affine2 = nn.Parameter(torch.zeros(total_chunks, 1, hidden_size))
 
         self.apply(self._init_weights)
         if init_chunk_weights:
@@ -366,32 +372,53 @@ class ChunkedLlamaForCausalLMBase(nn.Module):
 
 
 class ChunkedLlamaForCausalLM(ChunkedLlamaForCausalLMBase):
-    def __init__(self, config: LlamaConfig, *, init_chunk_weights: bool = True) -> None:
+    def __init__(self, 
+                 config: LlamaConfig, 
+                 *, 
+                 init_chunk_weights: bool = True, 
+                 use_affine1: bool = True, 
+                 use_affine2: bool = True) -> None:
         super().__init__(
             config,
             block_cls=ChunkedBlock,
-            num_matrix=4 + 2 * config.mlp_ratio,
+            num_matrix=4 + 3 * config.mlp_ratio,
             init_chunk_weights=init_chunk_weights,
+            use_affine1=use_affine1,
+            use_affine2=use_affine2,
         )
 
 
 class ChunkedAttentionLlamaForCausalLM(ChunkedLlamaForCausalLMBase):
-    def __init__(self, config: LlamaConfig, *, init_chunk_weights: bool = True) -> None:
+    def __init__(self, 
+                 config: LlamaConfig, 
+                 *, 
+                 init_chunk_weights: bool = True, 
+                 use_affine1: bool = True, 
+                 use_affine2: bool = True) -> None:
         super().__init__(
             config,
             block_cls=ChunkedAttentionBlock,
             num_matrix=4,
             init_chunk_weights=init_chunk_weights,
+            use_affine1=use_affine1,
+            use_affine2=use_affine2,
         )
 
 
 class ChunkedMlpLlamaForCausalLM(ChunkedLlamaForCausalLMBase):
-    def __init__(self, config: LlamaConfig, *, init_chunk_weights: bool = True) -> None:
+    def __init__(self, 
+                 config: LlamaConfig, 
+                 *, 
+                 init_chunk_weights: bool = True, 
+                 use_affine1: bool = True, 
+                 use_affine2: bool = True) -> None:
         super().__init__(
             config,
             block_cls=ChunkedMlpBlock,
-            num_matrix=2 * config.mlp_ratio,
+            num_matrix=3 * config.mlp_ratio,
             init_chunk_weights=init_chunk_weights,
+            use_affine1=use_affine1,
+            use_affine2=use_affine2,
         )
 
 
@@ -400,13 +427,15 @@ def build_model(
     orthogonal_type: str = "none",
     *,
     init_chunk_weights: bool = True,
+    use_affine1: bool = True,
+    use_affine2: bool = True,
 ) -> nn.Module:
     if orthogonal_type == "none":
         return LlamaForCausalLM(config)
     if orthogonal_type == "mlp":
-        return ChunkedMlpLlamaForCausalLM(config, init_chunk_weights=init_chunk_weights)
+        return ChunkedMlpLlamaForCausalLM(config, init_chunk_weights=init_chunk_weights, use_affine1=use_affine1, use_affine2=use_affine2)
     if orthogonal_type == "atten":
-        return ChunkedAttentionLlamaForCausalLM(config, init_chunk_weights=init_chunk_weights)
+        return ChunkedAttentionLlamaForCausalLM(config, init_chunk_weights=init_chunk_weights, use_affine1=use_affine1, use_affine2=use_affine2)
     if orthogonal_type == "all":
-        return ChunkedLlamaForCausalLM(config, init_chunk_weights=init_chunk_weights)
+        return ChunkedLlamaForCausalLM(config, init_chunk_weights=init_chunk_weights, use_affine1=use_affine1, use_affine2=use_affine2)
     raise ValueError(f"Unsupported orthogonal_type {orthogonal_type}")
