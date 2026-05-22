@@ -155,7 +155,14 @@ def main() -> None:
         )
 
     config = build_config(args)
-    model = build_model(config, orthogonal_type=args.orthogonal_type).to(device)
+    init_chunk_weights = not distributed or rank == 0
+    with torch.device(device):
+        model = build_model(
+            config,
+            orthogonal_type=args.orthogonal_type,
+            init_chunk_weights=init_chunk_weights,
+        )
+    model = model.to(device)
     if distributed:
         model = DDP(model, device_ids=[local_rank] if device.type == "cuda" else None)
 

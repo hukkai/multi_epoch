@@ -289,7 +289,14 @@ class LlamaForCausalLM(nn.Module):
 
 
 class ChunkedLlamaForCausalLMBase(nn.Module):
-    def __init__(self, config: LlamaConfig, *, block_cls: type[nn.Module], num_matrix: int) -> None:
+    def __init__(
+        self,
+        config: LlamaConfig,
+        *,
+        block_cls: type[nn.Module],
+        num_matrix: int,
+        init_chunk_weights: bool = True,
+    ) -> None:
         super().__init__()
         self.config = config
         self.hidden_size = config.hidden_size
@@ -304,14 +311,16 @@ class ChunkedLlamaForCausalLMBase(nn.Module):
         self.lm_head = nn.Linear(hidden_size, config.vocab_size, bias=False)
 
         total_chunks = config.num_layers * num_matrix
-        self.chunk_weights = nn.Parameter(
-            torch.randn(total_chunks, hidden_size, hidden_size) / hidden_size ** .5
-        )
+        chunk_weights = torch.empty(total_chunks, hidden_size, hidden_size)
+        if init_chunk_weights:
+            chunk_weights.normal_(mean=0.0, std=hidden_size**-0.5)
+        self.chunk_weights = nn.Parameter(chunk_weights)
         self.chunk_affine1 = nn.Parameter(torch.zeros(total_chunks, hidden_size, 1))
         self.chunk_affine2 = nn.Parameter(torch.zeros(total_chunks, 1, hidden_size))
 
         self.apply(self._init_weights)
-        self._init_chunk_weights()
+        if init_chunk_weights:
+            self._init_chunk_weights()
         if config.tie_word_embeddings:
             self.lm_head.weight = self.embed_tokens.weight
 
@@ -326,7 +335,7 @@ class ChunkedLlamaForCausalLMBase(nn.Module):
     def _init_chunk_weights(self) -> None:
         with torch.no_grad():
             weights = self.chunk_weights.data.to(dtype=torch.float32)
-            q, r = torch.linalg.qr(weights)
+            q, _ = torch.linalg.qr(weights)
             self.chunk_weights.data.copy_(q.to(dtype=self.chunk_weights.dtype))
 
     def forward(
@@ -357,27 +366,47 @@ class ChunkedLlamaForCausalLMBase(nn.Module):
 
 
 class ChunkedLlamaForCausalLM(ChunkedLlamaForCausalLMBase):
-    def __init__(self, config: LlamaConfig) -> None:
-        super().__init__(config, block_cls=ChunkedBlock, num_matrix=4 + 2 * config.mlp_ratio)
+    def __init__(self, config: LlamaConfig, *, init_chunk_weights: bool = True) -> None:
+        super().__init__(
+            config,
+            block_cls=ChunkedBlock,
+            num_matrix=4 + 2 * config.mlp_ratio,
+            init_chunk_weights=init_chunk_weights,
+        )
 
 
 class ChunkedAttentionLlamaForCausalLM(ChunkedLlamaForCausalLMBase):
-    def __init__(self, config: LlamaConfig) -> None:
-        super().__init__(config, block_cls=ChunkedAttentionBlock, num_matrix=4)
+    def __init__(self, config: LlamaConfig, *, init_chunk_weights: bool = True) -> None:
+        super().__init__(
+            config,
+            block_cls=ChunkedAttentionBlock,
+            num_matrix=4,
+            init_chunk_weights=init_chunk_weights,
+        )
 
 
 class ChunkedMlpLlamaForCausalLM(ChunkedLlamaForCausalLMBase):
-    def __init__(self, config: LlamaConfig) -> None:
-        super().__init__(config, block_cls=ChunkedMlpBlock, num_matrix=2 * config.mlp_ratio)
+    def __init__(self, config: LlamaConfig, *, init_chunk_weights: bool = True) -> None:
+        super().__init__(
+            config,
+            block_cls=ChunkedMlpBlock,
+            num_matrix=2 * config.mlp_ratio,
+            init_chunk_weights=init_chunk_weights,
+        )
 
 
-def build_model(config: LlamaConfig, orthogonal_type: str = "none") -> nn.Module:
+def build_model(
+    config: LlamaConfig,
+    orthogonal_type: str = "none",
+    *,
+    init_chunk_weights: bool = True,
+) -> nn.Module:
     if orthogonal_type == "none":
         return LlamaForCausalLM(config)
     if orthogonal_type == "mlp":
-        return ChunkedMlpLlamaForCausalLM(config)
+        return ChunkedMlpLlamaForCausalLM(config, init_chunk_weights=init_chunk_weights)
     if orthogonal_type == "atten":
-        return ChunkedAttentionLlamaForCausalLM(config)
+        return ChunkedAttentionLlamaForCausalLM(config, init_chunk_weights=init_chunk_weights)
     if orthogonal_type == "all":
-        return ChunkedLlamaForCausalLM(config)
+        return ChunkedLlamaForCausalLM(config, init_chunk_weights=init_chunk_weights)
     raise ValueError(f"Unsupported orthogonal_type {orthogonal_type}")
