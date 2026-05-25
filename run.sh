@@ -13,7 +13,7 @@ OMP_NUM_THREADS=1 torchrun \
     --num-layers 24 \
     --hidden-size 1280 \
     --num-heads 16 \
-    --batch-size 16 \
+    --batch-size 8 \
     --global-batch-size 512 \
     --seq-length 2048 \
     --lr 1.2e-3 \
