@@ -4,8 +4,7 @@ export MASTER_PORT=$((12000 + RANDOM % 20000))
 ORTH_TYPE=${1:-all}
 NUM_SUBMATRICES=${2:-64}
 SO_LR=${3:-1.0}
-USE_AFFINE1=${4:-true}
-USE_AFFINE2=${5:-true}
+USE_SCALE=${4:-false}
 
 
 OMP_NUM_THREADS=1 torchrun \
@@ -25,5 +24,5 @@ OMP_NUM_THREADS=1 torchrun \
     --num-steps 50_000 \
     --orthogonal-type ${ORTH_TYPE} \
     --num-submatrices ${NUM_SUBMATRICES} \
-    --use-affine1 ${USE_AFFINE1} \
-    --use-affine2 ${USE_AFFINE2}
+    --use-scale ${USE_SCALE}
+

@@ -67,8 +67,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--orth-beta2", type=float, default=0.95)
     parser.add_argument("--orth-eps", type=float, default=1e-8)
     parser.add_argument("--strict-stiefel-last", type=str2bool, default=True)
-    parser.add_argument("--use-affine1", type=str2bool, default=True)
-    parser.add_argument("--use-affine2", type=str2bool, default=True)
+    parser.add_argument("--use-scale", type=str2bool, default=False)
 
     return parser.parse_args()
 
@@ -159,8 +158,7 @@ def main() -> None:
             config,
             orthogonal_type=args.orthogonal_type,
             init_chunk_weights=init_chunk_weights,
-            use_affine1=args.use_affine1,
-            use_affine2=args.use_affine2,
+            use_scale=args.use_scale,
         )
     model = model.to(device)
     if distributed:
