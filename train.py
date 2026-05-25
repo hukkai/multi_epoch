@@ -41,9 +41,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--save-freq", type=int, default=9999999999)
 
     parser.add_argument("--orthogonal-type", type=str, default="none", choices=["none", "mlp", "atten", "all"])
-    parser.add_argument("--hidden-size", type=int, default=3072)
-    parser.add_argument("--num-layers", type=int, default=28)
-    parser.add_argument("--num-heads", type=int, default=24)
+    parser.add_argument("--hidden-size", type=int, default=1024)
+    parser.add_argument("--num-layers", type=int, default=24)
+    parser.add_argument("--num-heads", type=int, default=16)
     parser.add_argument("--mlp-ratio", type=int, default=3)
     parser.add_argument("--max-position-embeddings", type=int, default=2048)
     parser.add_argument("--vocab-size", type=int, default=32000)
@@ -67,8 +67,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--orth-beta2", type=float, default=0.95)
     parser.add_argument("--orth-eps", type=float, default=1e-8)
     parser.add_argument("--strict-stiefel-last", type=str2bool, default=True)
-    parser.add_argument("--use-affine1", type=str2bool, default=True)
-    parser.add_argument("--use-affine2", type=str2bool, default=True)
 
     return parser.parse_args()
 
@@ -158,9 +156,7 @@ def main() -> None:
         model = build_model(
             config,
             orthogonal_type=args.orthogonal_type,
-            init_chunk_weights=init_chunk_weights,
-            use_affine1=args.use_affine1,
-            use_affine2=args.use_affine2,
+            init_chunk_weights=init_chunk_weights
         )
     model = model.to(device)
     if distributed:
