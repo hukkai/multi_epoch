@@ -2,8 +2,7 @@
 export MASTER_PORT=$((12000 + RANDOM % 20000))
 
 ORTH_TYPE=${1:-all}
-CHUNK_SCALE_INIT=${2:-1.0}
-NUM_SUBMATRICES=${3:-64}
+NUM_SUBMATRICES=${2:-64}
 
 
 OMP_NUM_THREADS=1 torchrun \
@@ -22,5 +21,4 @@ OMP_NUM_THREADS=1 torchrun \
     --so-lr 1.0 \
     --num-steps 50_000 \
     --orthogonal-type ${ORTH_TYPE} \
-    --chunk-scale-init ${CHUNK_SCALE_INIT} \
     --num-submatrices ${NUM_SUBMATRICES}

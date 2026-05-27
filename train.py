@@ -62,7 +62,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--clip-grad", type=float, default=1.0)
 
     parser.add_argument("--so-lr", type=float, default=1.0)
-    parser.add_argument("--chunk-scale-init", type=float, default=1.0)
     parser.add_argument("--num-submatrices", type=int, default=16)
     parser.add_argument("--orth-beta1", type=float, default=0.9)
     parser.add_argument("--orth-beta2", type=float, default=0.95)
@@ -158,7 +157,6 @@ def main() -> None:
             config,
             orthogonal_type=args.orthogonal_type,
             init_chunk_weights=init_chunk_weights,
-            chunk_scale_init=args.chunk_scale_init,
         )
     model = model.to(device)
     if distributed:
