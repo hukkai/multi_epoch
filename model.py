@@ -208,7 +208,7 @@ class ChunkedBlock(nn.Module):
         self.mlp = ChunkedMLP(config)
 
     def forward(self, x: torch.Tensor, weights: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
-        attn_weights, mlp_weights = torch.split(weights, [2, 3 * self.mlp.r], dim=0)
+        attn_weights, mlp_weights = torch.split(weights, [4, 3 * self.mlp.r], dim=0)
         x = x + self.self_attn(self.input_layernorm(x), attn_weights, cos, sin)
         x = x + self.mlp(self.post_attention_layernorm(x), mlp_weights)
         return x
