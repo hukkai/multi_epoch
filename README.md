@@ -3,13 +3,13 @@
 tag: learn-scale
 
 ```
-bash run.sh all 1.0
+bash run.sh configs/adamw.yaml
 ```
 
 ```
-bash run.sh all 1.414
+torchrun --nproc_per_node 8 train.py --config configs/adamw.yaml
 ```
 
 ```
-bash run.sh all 2.0
+python train.py --config configs/adamw.yaml
 ```
