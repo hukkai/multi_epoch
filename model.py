@@ -134,10 +134,10 @@ class ChunkedAttention(nn.Module):
 
     def forward(self, x: torch.Tensor, weights: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
         batch_size, seq_len, hidden_size = x.shape
-        v_q, v_k, v_w, o_w = weights.unbind(dim=0)
+        q_w, k_w, v_w, o_w = weights.unbind(dim=0)
 
-        q = F.linear(x, v_q).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
-        k = F.linear(x, v_k).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
+        q = F.linear(x, q_w).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
+        k = F.linear(x, k_w).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
         v = F.linear(x, v_w).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
 
         q, k = apply_rotary_pos_emb(q, k, cos, sin)
