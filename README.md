@@ -1,15 +1,21 @@
 # ortho_llm
 
-tag: learn-scale
+tag: fix-len
 
 ```
-bash run.sh configs/adamw.yaml
-```
-
-```
-torchrun --nproc_per_node 8 train.py --config configs/adamw.yaml
+bash run.sh configs/ortho.yaml
 ```
 
 ```
-python train.py --config configs/adamw.yaml
+bash run.sh configs/ortho_x3.yaml
 ```
+
+```
+bash run.sh configs/ortho_x10.yaml
+```
+
+```
+bash run.sh configs/ortho_x30.yaml
+```
+
+

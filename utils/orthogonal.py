@@ -7,7 +7,7 @@ import torch.distributed as dist
 import torch.nn.functional as F
 
 from .ops import polar
-from .polar_taylor import stiefel_update_taylor
+from .polar_taylor import stiefel_project, stiefel_update_taylor
 
 
 class SOOptimizer:
@@ -70,10 +70,12 @@ class SOOptimizer:
 
 
         x = x.reshape(-1, self.orth_dim, self.dim)
-        update = -lr * m_hat / (v_hat.sqrt() + self.eps)
+        update = m_hat / (v_hat.sqrt() + self.eps)
         update = update.reshape_as(x)
 
-        new_x = stiefel_update_taylor(x, update)
+        update = stiefel_project(x, update)
+        update = F.normalize(update, dim=(-1, -2)) * lr
+        new_x = stiefel_update_taylor(x, update, projected=True)
 
         if is_last and self.strict_stiefel:
             new_x = polar(new_x)
