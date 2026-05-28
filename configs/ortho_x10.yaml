@@ -4,7 +4,7 @@ seed: 42
 log_interval: 10
 save_freq: 9999999999
 
-orthogonal_type: none
+orthogonal_type: all
 hidden_size: 1280
 num_layers: 24
 num_heads: 16
