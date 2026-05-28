@@ -74,7 +74,7 @@ class SOOptimizer:
         update = update.reshape_as(x)
 
         update = stiefel_project(x, update)
-        update = F.normalize(update, dim=(-1, -2)) * lr
+        update = F.normalize(update, dim=(-1, -2)) * -lr
         new_x = stiefel_update_taylor(x, update, projected=True)
 
         if is_last and self.strict_stiefel:
