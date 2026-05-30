@@ -4,10 +4,12 @@ import argparse
 import os
 import time
 from contextlib import nullcontext
+from typing import Any
 
 import numpy as np
 import torch
 import torch.distributed as dist
+import yaml
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 from model import LlamaConfig, build_model
@@ -23,52 +25,122 @@ from utils import (
 )
 
 
-def str2bool(value: str) -> bool:
-    if value.lower() in ("true", "1", "yes", "y", "on"):
-        return True
-    if value.lower() in ("false", "0", "no", "n", "off"):
-        return False
-    raise argparse.ArgumentTypeError(f"invalid bool value: {value}")
+DEFAULT_CONFIG_PATH = "configs/adamw.yaml"
+
+CONFIG_TYPES = {
+    "data_dir": str,
+    "output": str,
+    "seed": int,
+    "log_interval": int,
+    "save_freq": int,
+    "orthogonal_type": str,
+    "hidden_size": int,
+    "num_layers": int,
+    "num_heads": int,
+    "mlp_ratio": int,
+    "max_position_embeddings": int,
+    "vocab_size": int,
+    "rope_theta": float,
+    "rms_norm_eps": float,
+    "attention_dropout": float,
+    "tie_word_embeddings": bool,
+    "batch_size": int,
+    "global_batch_size": int,
+    "seq_length": int,
+    "num_steps": int,
+    "lr": float,
+    "min_lr": float,
+    "weight_decay": float,
+    "clip_grad": float,
+    "so_lr": float,
+    "num_submatrices": int,
+    "orth_beta1": float,
+    "orth_beta2": float,
+    "orth_eps": float,
+    "proj_level": int,
+    "strict_stiefel_last": bool,
+}
+
+ORTHOGONAL_TYPE_CHOICES = {"none", "mlp", "atten", "all"}
+ORTHOGONAL_CONFIG_KEYS = {
+    "so_lr",
+    "num_submatrices",
+    "orth_beta1",
+    "orth_beta2",
+    "orth_eps",
+    "proj_level",
+    "strict_stiefel_last",
+}
+
+
+def _coerce_config_value(key: str, value: Any) -> Any:
+    expected_type = CONFIG_TYPES[key]
+    if expected_type is bool:
+        if not isinstance(value, bool):
+            raise ValueError(f"{key} must be a YAML bool, got {type(value).__name__}")
+        return value
+    if expected_type is int:
+        if isinstance(value, bool):
+            raise ValueError(f"{key} must be an int, got bool")
+        return int(value)
+    if expected_type is float:
+        if isinstance(value, bool):
+            raise ValueError(f"{key} must be a float, got bool")
+        return float(value)
+    if expected_type is str:
+        return str(value)
+    return value
+
+
+def load_config(config_path: str) -> argparse.Namespace:
+    with open(config_path, "r", encoding="utf-8") as handle:
+        raw_config = yaml.safe_load(handle)
+
+    if not isinstance(raw_config, dict):
+        raise ValueError(f"{config_path} must contain a YAML mapping")
+
+    config = {}
+    for key, value in raw_config.items():
+        normalized_key = str(key).replace("-", "_")
+        if normalized_key in config:
+            raise ValueError(f"Duplicate config key after normalization: {key}")
+        config[normalized_key] = value
+
+    expected_keys = set(CONFIG_TYPES)
+    unknown_keys = sorted(set(config) - expected_keys)
+    if unknown_keys:
+        raise ValueError(f"Unknown config keys in {config_path}: {', '.join(unknown_keys)}")
+
+    required_keys = expected_keys
+    if config.get("orthogonal_type") == "none":
+        required_keys = expected_keys - ORTHOGONAL_CONFIG_KEYS
+
+    missing_keys = sorted(required_keys - set(config))
+    if missing_keys:
+        raise ValueError(f"Missing config keys in {config_path}: {', '.join(missing_keys)}")
+
+    coerced_config = {
+        key: _coerce_config_value(key, config[key])
+        for key in CONFIG_TYPES
+        if key in config
+    }
+
+    if coerced_config["orthogonal_type"] not in ORTHOGONAL_TYPE_CHOICES:
+        choices = ", ".join(sorted(ORTHOGONAL_TYPE_CHOICES))
+        raise ValueError(f"orthogonal_type must be one of: {choices}")
+
+    return argparse.Namespace(config=config_path, **coerced_config)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser("Orthogonal LLaMA-2-style pretraining")
-
-    parser.add_argument("--data-dir", type=str, required=True)
-    parser.add_argument("--output", type=str, default="./output")
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--log-interval", type=int, default=10)
-    parser.add_argument("--save-freq", type=int, default=9999999999)
-
-    parser.add_argument("--orthogonal-type", type=str, default="none", choices=["none", "mlp", "atten", "all"])
-    parser.add_argument("--hidden-size", type=int, default=1024)
-    parser.add_argument("--num-layers", type=int, default=24)
-    parser.add_argument("--num-heads", type=int, default=16)
-    parser.add_argument("--mlp-ratio", type=int, default=3)
-    parser.add_argument("--max-position-embeddings", type=int, default=2048)
-    parser.add_argument("--vocab-size", type=int, default=32000)
-    parser.add_argument("--rope-theta", type=float, default=10000.0)
-    parser.add_argument("--rms-norm-eps", type=float, default=1e-6)
-    parser.add_argument("--attention-dropout", type=float, default=0.0)
-    parser.add_argument("--tie-word-embeddings", type=str2bool, default=True)
-
-    parser.add_argument("--batch-size", type=int, default=4, help="Micro-batch size per rank")
-    parser.add_argument("--global-batch-size", type=int, default=512)
-    parser.add_argument("--seq-length", type=int, default=2048)
-    parser.add_argument("--num-steps", type=int, default=100_000)
-    parser.add_argument("--lr", type=float, default=1e-4)
-    parser.add_argument("--min-lr", type=float, default=1e-5)
-    parser.add_argument("--weight-decay", type=float, default=0.1)
-    parser.add_argument("--clip-grad", type=float, default=1.0)
-
-    parser.add_argument("--so-lr", type=float, default=1.0)
-    parser.add_argument("--num-submatrices", type=int, default=16)
-    parser.add_argument("--orth-beta1", type=float, default=0.9)
-    parser.add_argument("--orth-beta2", type=float, default=0.95)
-    parser.add_argument("--orth-eps", type=float, default=1e-8)
-    parser.add_argument("--strict-stiefel-last", type=str2bool, default=True)
-
-    return parser.parse_args()
+    parser.add_argument(
+        "--config",
+        default=DEFAULT_CONFIG_PATH,
+        help=f"YAML config path (default: {DEFAULT_CONFIG_PATH})",
+    )
+    cli_args = parser.parse_args()
+    return load_config(cli_args.config)
 
 
 def resolve_data_path(data_dir: str, rank: int) -> str:
@@ -172,7 +244,8 @@ def main() -> None:
             betas=(args.orth_beta1, args.orth_beta2),
             eps=args.orth_eps,
             num_submatrices=args.num_submatrices,
-            strict_stiefel=args.strict_stiefel_last
+            strict_stiefel=args.strict_stiefel_last,
+            proj_level=args.proj_level,
         )
 
     optimizer.zero_grad(set_to_none=True)

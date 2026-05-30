@@ -4,7 +4,7 @@ seed: 42
 log_interval: 10
 save_freq: 9999999999
 
-orthogonal_type: none
+orthogonal_type: all
 hidden_size: 1280
 num_layers: 24
 num_heads: 16
@@ -24,3 +24,11 @@ lr: 1.2e-3
 min_lr: 1.2e-5
 weight_decay: 0.1
 clip_grad: 1.0
+
+so_lr: 3.0
+num_submatrices: 64
+orth_beta1: 0.9
+orth_beta2: 0.95
+orth_eps: 1e-8
+strict_stiefel_last: True
+proj_level: 1
