@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-import math
-
 import torch
 import torch.distributed as dist
-import torch.nn.functional as F
 
 from .ops import polar
 from .polar_taylor import stiefel_project, stiefel_update_taylor
@@ -19,12 +16,18 @@ class SOOptimizer:
         eps: float = 1e-8,
         num_submatrices: int = 8,
         strict_stiefel: bool = True,
+        proj_level: int = 0,
     ) -> None:
         self.param = param
         self.lr = lr
         self.beta1, self.beta2 = betas
         self.eps = eps
         self.strict_stiefel = strict_stiefel
+        self.dim = param.shape[1]
+        self.orth_dim = self.dim // num_submatrices
+        if proj_level not in (0, 1, 2):
+            raise ValueError("proj_level must be 0, 1, or 2")
+        self.proj_level = proj_level
 
         if dist.is_initialized():
             self.world_size = dist.get_world_size()
@@ -40,17 +43,14 @@ class SOOptimizer:
         per_rank = total // self.world_size
         self.local_slice = slice(self.rank * per_rank, (self.rank + 1) * per_rank)
 
-        self.m = torch.zeros_like(param.data[self.local_slice])
+        per_rank_matrix = per_rank * num_submatrices
+        self.m = torch.zeros(per_rank_matrix, self.orth_dim, self.dim, device=param.device)
         self.v = torch.zeros_like(self.m)
 
         self.step_count = torch.tensor(0.0, device=self.m.device)
 
-        self.dim = self.m.shape[1]
         if self.dim % num_submatrices != 0:
             raise ValueError(f"Matrix dim {self.dim} must be divisible by num_submatrices {num_submatrices}")
-
-        self.orth_dim = self.dim // num_submatrices
-
 
     def step(self, lr: float | None = None, is_last: bool = False) -> None:
         if self.param.grad is None:
@@ -59,28 +59,32 @@ class SOOptimizer:
         lr = lr if lr is not None else self.lr
         self.step_count += 1
 
-        x = self.param.data[self.local_slice]
-        grad = self.param.grad[self.local_slice]
+        x = self.param.data[self.local_slice].reshape(-1, self.orth_dim, self.dim)
+        grad = self.param.grad[self.local_slice].reshape_as(x)
 
-        self.m += (grad - self.m) * (1.0 - self.beta1)
-        self.v += (grad ** 2 - self.v) * (1.0 - self.beta2)
+        if self.proj_level == 0:
+            self.m += (grad - self.m) * (1.0 - self.beta1)
+            self.v += (grad ** 2 - self.v) * (1.0 - self.beta2)
+        else:
+            proj_grad = stiefel_project(x, grad)
+            if self.proj_level == 1:
+                self.m += (proj_grad - self.m) * (1.0 - self.beta1)
+                self.v += (grad ** 2 - self.v) * (1.0 - self.beta2)
+            elif self.proj_level == 2:
+                self.m += (proj_grad - self.m) * (1.0 - self.beta1)
+                self.v += (proj_grad ** 2 - self.v) * (1.0 - self.beta2)
 
         m_hat = self.m / (1.0 - self.beta1**self.step_count)
         v_hat = self.v / (1.0 - self.beta2**self.step_count)
 
+        update = -lr * m_hat / (v_hat.sqrt() + self.eps)
 
-        x = x.reshape(-1, self.orth_dim, self.dim)
-        update = m_hat / (v_hat.sqrt() + self.eps)
-        update = update.reshape_as(x)
-
-        update = stiefel_project(x, update)
-        update = F.normalize(update, dim=(-1, -2)) * -lr
-        new_x = stiefel_update_taylor(x, update, projected=True)
+        new_x = stiefel_update_taylor(x, update)
 
         if is_last and self.strict_stiefel:
             new_x = polar(new_x)
 
-        new_x = new_x.reshape_as(self.m)
+        new_x = new_x.reshape(-1, self.dim, self.dim)
 
         if dist.is_initialized():
             dist.all_gather_into_tensor(self.param.data, new_x.contiguous())
