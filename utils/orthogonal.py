@@ -16,7 +16,6 @@ class SOOptimizer:
         eps: float = 1e-8,
         num_submatrices: int = 8,
         strict_stiefel: bool = True,
-        proj_level: int = 0,
     ) -> None:
         self.param = param
         self.lr = lr
@@ -25,9 +24,6 @@ class SOOptimizer:
         self.strict_stiefel = strict_stiefel
         self.dim = param.shape[1]
         self.orth_dim = self.dim // num_submatrices
-        if proj_level not in (0, 1, 2):
-            raise ValueError("proj_level must be 0, 1, or 2")
-        self.proj_level = proj_level
 
         if dist.is_initialized():
             self.world_size = dist.get_world_size()
@@ -62,17 +58,8 @@ class SOOptimizer:
         x = self.param.data[self.local_slice].reshape(-1, self.orth_dim, self.dim)
         grad = self.param.grad[self.local_slice].reshape_as(x)
 
-        if self.proj_level == 0:
-            self.m += (grad - self.m) * (1.0 - self.beta1)
-            self.v += (grad ** 2 - self.v) * (1.0 - self.beta2)
-        else:
-            proj_grad = stiefel_project(x, grad)
-            if self.proj_level == 1:
-                self.m += (proj_grad - self.m) * (1.0 - self.beta1)
-                self.v += (grad ** 2 - self.v) * (1.0 - self.beta2)
-            elif self.proj_level == 2:
-                self.m += (proj_grad - self.m) * (1.0 - self.beta1)
-                self.v += (proj_grad ** 2 - self.v) * (1.0 - self.beta2)
+        self.m += (grad - self.m) * (1.0 - self.beta1)
+        self.v += (grad ** 2 - self.v) * (1.0 - self.beta2)
 
         m_hat = self.m / (1.0 - self.beta1**self.step_count)
         v_hat = self.v / (1.0 - self.beta2**self.step_count)

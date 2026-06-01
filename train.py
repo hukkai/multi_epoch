@@ -57,7 +57,6 @@ CONFIG_TYPES = {
     "orth_beta1": float,
     "orth_beta2": float,
     "orth_eps": float,
-    "proj_level": int,
     "strict_stiefel_last": bool,
 }
 
@@ -68,7 +67,6 @@ ORTHOGONAL_CONFIG_KEYS = {
     "orth_beta1",
     "orth_beta2",
     "orth_eps",
-    "proj_level",
     "strict_stiefel_last",
 }
 
@@ -245,7 +243,6 @@ def main() -> None:
             eps=args.orth_eps,
             num_submatrices=args.num_submatrices,
             strict_stiefel=args.strict_stiefel_last,
-            proj_level=args.proj_level,
         )
 
     optimizer.zero_grad(set_to_none=True)
