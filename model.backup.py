@@ -132,11 +132,9 @@ class ChunkedAttention(nn.Module):
         self.hidden_size = config.hidden_size
         self.attention_dropout = config.attention_dropout
 
-        self.o_proj = nn.Linear(self.hidden_size, self.hidden_size, bias=False)
-
     def forward(self, x: torch.Tensor, weights: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
         batch_size, seq_len, hidden_size = x.shape
-        q_w, k_w, v_w = weights.unbind(dim=0)
+        q_w, k_w, v_w, o_w = weights.unbind(dim=0)
 
         q = F.linear(x, q_w).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
         k = F.linear(x, k_w).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
@@ -151,7 +149,7 @@ class ChunkedAttention(nn.Module):
             is_causal=True,
         )
         attn_output = attn_output.transpose(1, 2).contiguous().view(batch_size, seq_len, hidden_size)
-        return self.o_proj(attn_output)
+        return F.linear(attn_output, o_w)
 
 
 class MLP(nn.Module):
@@ -173,16 +171,16 @@ class ChunkedMLP(nn.Module):
         super().__init__()
         self.r = config.mlp_ratio
         self.hidden_size = config.hidden_size
-        self.down_proj = nn.Linear(config.intermediate_size, config.hidden_size, bias=False)
 
     def forward(self, x: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
-        gate_rcc, up_rcc = torch.split(weights, [self.r, self.r], dim=0)
+        gate_rcc, up_rcc, down_rcc = torch.split(weights, [self.r, self.r, self.r], dim=0)
 
         gate_w = gate_rcc.reshape(self.r * self.hidden_size, self.hidden_size)
         up_w = up_rcc.reshape(self.r * self.hidden_size, self.hidden_size)
+        down_w = down_rcc.reshape(self.r * self.hidden_size, self.hidden_size).T
 
         x = F.silu(F.linear(x, gate_w)) * F.linear(x, up_w)
-        x = self.down_proj(x)
+        x = F.linear(x, down_w)
 
         return x
 
@@ -210,7 +208,7 @@ class ChunkedBlock(nn.Module):
         self.mlp = ChunkedMLP(config)
 
     def forward(self, x: torch.Tensor, weights: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
-        attn_weights, mlp_weights = torch.split(weights, [3, 2 * self.mlp.r], dim=0)
+        attn_weights, mlp_weights = torch.split(weights, [4, 3 * self.mlp.r], dim=0)
         x = x + self.self_attn(self.input_layernorm(x), attn_weights, cos, sin)
         x = x + self.mlp(self.post_attention_layernorm(x), mlp_weights)
         return x
@@ -374,7 +372,7 @@ class ChunkedLlamaForCausalLM(ChunkedLlamaForCausalLMBase):
         super().__init__(
             config,
             block_cls=ChunkedBlock,
-            num_matrix=3 + 2 * config.mlp_ratio,
+            num_matrix=4 + 3 * config.mlp_ratio,
             init_chunk_weights=init_chunk_weights,
         )
 
@@ -387,7 +385,7 @@ class ChunkedAttentionLlamaForCausalLM(ChunkedLlamaForCausalLMBase):
         super().__init__(
             config,
             block_cls=ChunkedAttentionBlock,
-            num_matrix=3,
+            num_matrix=4,
             init_chunk_weights=init_chunk_weights,
         )
 
@@ -400,7 +398,7 @@ class ChunkedMlpLlamaForCausalLM(ChunkedLlamaForCausalLMBase):
         super().__init__(
             config,
             block_cls=ChunkedMlpBlock,
-            num_matrix=2 * config.mlp_ratio,
+            num_matrix=3 * config.mlp_ratio,
             init_chunk_weights=init_chunk_weights,
         )
 
