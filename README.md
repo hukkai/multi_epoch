@@ -1,11 +1,7 @@
 # ortho_llm
 
-tag: pj_level
+tag: no-gate
 
 ```
 bash run.sh configs/ortho_all.yaml
-```
-
-```
-bash run.sh configs/ortho_atten.yaml
 ```
