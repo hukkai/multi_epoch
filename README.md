@@ -24,3 +24,11 @@ bash run.sh adamw_20k_d2.yaml
 ```
 bash run.sh ortho_all_20k_d2.yaml
 ```
+
+```
+bash run.sh ortho_all_20k_n16.yaml
+```
+
+```
+bash run.sh ortho_all_20k_n8.yaml
+```
