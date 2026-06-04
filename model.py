@@ -19,6 +19,7 @@ class LlamaConfig:
     rms_norm_eps: float = 1e-6
     attention_dropout: float = 0.0
     tie_word_embeddings: bool = False
+    float32_logits: bool = False
 
     def __post_init__(self) -> None:
         if self.hidden_size % self.num_heads != 0:
@@ -172,15 +173,14 @@ class ChunkedMLP(nn.Module):
         self.r = config.mlp_ratio
         self.hidden_size = config.hidden_size
 
-        self.gate_proj = nn.Linear(config.hidden_size, config.intermediate_size, bias=False)
-
     def forward(self, x: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
-        up_rcc, down_rcc = torch.split(weights, [self.r, self.r], dim=0)
+        gate_rcc, up_rcc, down_rcc = torch.split(weights, [self.r, self.r, self.r], dim=0)
 
+        gate_w = gate_rcc.reshape(self.r * self.hidden_size, self.hidden_size)
         up_w = up_rcc.reshape(self.r * self.hidden_size, self.hidden_size)
         down_w = down_rcc.reshape(self.r * self.hidden_size, self.hidden_size).T
 
-        x = F.silu(self.gate_proj(x)) * F.linear(x, up_w)
+        x = F.silu(F.linear(x, gate_w)) * F.linear(x, up_w)
         x = F.linear(x, down_w)
 
         return x
@@ -209,7 +209,7 @@ class ChunkedBlock(nn.Module):
         self.mlp = ChunkedMLP(config)
 
     def forward(self, x: torch.Tensor, weights: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
-        attn_weights, mlp_weights = torch.split(weights, [4, 2 * self.mlp.r], dim=0)
+        attn_weights, mlp_weights = torch.split(weights, [4, 3 * self.mlp.r], dim=0)
         x = x + self.self_attn(self.input_layernorm(x), attn_weights, cos, sin)
         x = x + self.mlp(self.post_attention_layernorm(x), mlp_weights)
         return x
@@ -252,6 +252,7 @@ class LlamaForCausalLM(nn.Module):
         self.layers = nn.ModuleList([LlamaBlock(config) for _ in range(config.num_layers)])
         self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        self.float32_logits = config.float32_logits
 
         self.apply(self._init_weights)
         if config.tie_word_embeddings:
@@ -280,6 +281,8 @@ class LlamaForCausalLM(nn.Module):
 
         x = self.norm(x)
         logits = self.lm_head(x)
+        if self.float32_logits:
+            logits = logits.to(dtype=torch.float32)
 
         loss = None
         if labels is not None:
@@ -308,6 +311,7 @@ class ChunkedLlamaForCausalLMBase(nn.Module):
         self.layers = nn.ModuleList([block_cls(config) for _ in range(config.num_layers)])
         self.norm = RMSNorm(hidden_size, eps=config.rms_norm_eps)
         self.lm_head = nn.Linear(hidden_size, config.vocab_size, bias=False)
+        self.float32_logits = config.float32_logits
 
         total_chunks = config.num_layers * num_matrix
         chunk_weights = torch.empty(total_chunks, hidden_size, hidden_size)
@@ -358,6 +362,8 @@ class ChunkedLlamaForCausalLMBase(nn.Module):
 
         x = self.norm(x)
         logits = self.lm_head(x)
+        if self.float32_logits:
+            logits = logits.to(dtype=torch.float32)
 
         loss = None
         if labels is not None:
@@ -373,7 +379,7 @@ class ChunkedLlamaForCausalLM(ChunkedLlamaForCausalLMBase):
         super().__init__(
             config,
             block_cls=ChunkedBlock,
-            num_matrix=4 + 2 * config.mlp_ratio,
+            num_matrix=4 + 3 * config.mlp_ratio,
             init_chunk_weights=init_chunk_weights,
         )
 
@@ -399,7 +405,7 @@ class ChunkedMlpLlamaForCausalLM(ChunkedLlamaForCausalLMBase):
         super().__init__(
             config,
             block_cls=ChunkedMlpBlock,
-            num_matrix=2 * config.mlp_ratio,
+            num_matrix=3 * config.mlp_ratio,
             init_chunk_weights=init_chunk_weights,
         )
 

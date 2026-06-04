@@ -52,6 +52,7 @@ CONFIG_TYPES = {
     "min_lr": float,
     "weight_decay": float,
     "clip_grad": float,
+    "float32_logits": bool,
     "so_lr": float,
     "num_submatrices": int,
     "orth_beta1": float,
