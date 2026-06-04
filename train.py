@@ -25,7 +25,7 @@ from utils import (
 )
 
 
-DEFAULT_CONFIG_PATH = "configs/adamw.yaml"
+DEFAULT_CONFIG_PATH = "configs/adamw_20k.yaml"
 
 CONFIG_TYPES = {
     "data_dir": str,
@@ -166,6 +166,7 @@ def build_config(args: argparse.Namespace) -> LlamaConfig:
         rms_norm_eps=args.rms_norm_eps,
         attention_dropout=args.attention_dropout,
         tie_word_embeddings=args.tie_word_embeddings,
+        float32_logits=args.float32_logits,
     )
 
 
