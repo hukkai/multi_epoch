@@ -32,3 +32,7 @@ bash run.sh configs/ortho_all_20k_n16.yaml
 ```
 bash run.sh configs/ortho_all_20k_n8.yaml
 ```
+
+```
+bash run.sh configs/ortho_all_20k_no_strict.yaml
+```
