@@ -15,7 +15,6 @@ rope_theta: 10000.0
 rms_norm_eps: 1e-6
 attention_dropout: 0.0
 tie_word_embeddings: True
-float32_logits: False
 
 batch_size: 8
 global_batch_size: 512
@@ -31,4 +30,3 @@ num_submatrices: 64
 orth_beta1: 0.9
 orth_beta2: 0.95
 orth_eps: 1e-8
-strict_stiefel_last: True

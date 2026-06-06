@@ -1,38 +1,14 @@
 # ortho_llm
 
-tag: fast-run
+tag: 1.5B
 
 baseline:
 ```
-bash run.sh configs/ortho_all_20k.yaml
+bash run.sh configs/1.5B/ortho_all_50k.yaml
 ```
 
-Other exps:
 
 ```
-bash run.sh configs/adamw_20k.yaml
+bash run.sh configs/1.5B/adamw_50k.yaml
 ```
 
-```
-bash run.sh configs/ortho_all_20k_fp32logits.yaml
-```
-
-```
-bash run.sh configs/adamw_20k_d2.yaml
-```
-
-```
-bash run.sh configs/ortho_all_20k_d2.yaml
-```
-
-```
-bash run.sh configs/ortho_all_20k_n16.yaml
-```
-
-```
-bash run.sh configs/ortho_all_20k_n8.yaml
-```
-
-```
-bash run.sh configs/ortho_all_20k_no_strict.yaml
-```

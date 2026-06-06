@@ -4,9 +4,9 @@ seed: 42
 log_interval: 10
 save_freq: 9999999999
 
-orthogonal_type: none
-hidden_size: 1280
-num_layers: 24
+orthogonal_type: all
+hidden_size: 1920
+num_layers: 32
 num_heads: 16
 mlp_ratio: 3
 max_position_embeddings: 2048
@@ -15,9 +15,8 @@ rope_theta: 10000.0
 rms_norm_eps: 1e-6
 attention_dropout: 0.0
 tie_word_embeddings: True
-float32_logits: False
 
-batch_size: 8
+batch_size: 2
 global_batch_size: 512
 seq_length: 2048
 num_steps: 50000
@@ -25,3 +24,9 @@ lr: 1.2e-3
 min_lr: 1.2e-5
 weight_decay: 0.1
 clip_grad: 1.0
+
+so_lr: 1.0
+num_submatrices: 32
+orth_beta1: 0.9
+orth_beta2: 0.95
+orth_eps: 1e-8

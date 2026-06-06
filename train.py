@@ -25,7 +25,7 @@ from utils import (
 )
 
 
-DEFAULT_CONFIG_PATH = "configs/adamw_20k.yaml"
+DEFAULT_CONFIG_PATH = "configs/0.5B/adamw_20k.yaml"
 
 CONFIG_TYPES = {
     "data_dir": str,
@@ -52,13 +52,11 @@ CONFIG_TYPES = {
     "min_lr": float,
     "weight_decay": float,
     "clip_grad": float,
-    "float32_logits": bool,
     "so_lr": float,
     "num_submatrices": int,
     "orth_beta1": float,
     "orth_beta2": float,
     "orth_eps": float,
-    "strict_stiefel_last": bool,
 }
 
 ORTHOGONAL_TYPE_CHOICES = {"none", "mlp", "atten", "all"}
@@ -68,7 +66,6 @@ ORTHOGONAL_CONFIG_KEYS = {
     "orth_beta1",
     "orth_beta2",
     "orth_eps",
-    "strict_stiefel_last",
 }
 
 
@@ -166,7 +163,6 @@ def build_config(args: argparse.Namespace) -> LlamaConfig:
         rms_norm_eps=args.rms_norm_eps,
         attention_dropout=args.attention_dropout,
         tie_word_embeddings=args.tie_word_embeddings,
-        float32_logits=args.float32_logits,
     )
 
 
@@ -243,8 +239,7 @@ def main() -> None:
             lr=args.lr * args.so_lr,
             betas=(args.orth_beta1, args.orth_beta2),
             eps=args.orth_eps,
-            num_submatrices=args.num_submatrices,
-            strict_stiefel=args.strict_stiefel_last,
+            num_submatrices=args.num_submatrices
         )
 
     optimizer.zero_grad(set_to_none=True)
