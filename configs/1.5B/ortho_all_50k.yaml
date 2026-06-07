@@ -30,3 +30,4 @@ num_submatrices: 32
 orth_beta1: 0.9
 orth_beta2: 0.95
 orth_eps: 1e-8
+so_method: "base"
