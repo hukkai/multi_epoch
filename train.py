@@ -15,7 +15,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from model import LlamaConfig, build_model
 from utils import (
     AverageMeter,
-    SOOptimizer,
+    get_so_optimizer,
     cosine_lr,
     get_param_groups,
     init_distributed,
@@ -57,6 +57,7 @@ CONFIG_TYPES = {
     "orth_beta1": float,
     "orth_beta2": float,
     "orth_eps": float,
+    "so_method": str,
 }
 
 ORTHOGONAL_TYPE_CHOICES = {"none", "mlp", "atten", "all"}
@@ -66,6 +67,7 @@ ORTHOGONAL_CONFIG_KEYS = {
     "orth_beta1",
     "orth_beta2",
     "orth_eps",
+    "so_method",
 }
 
 
@@ -234,12 +236,13 @@ def main() -> None:
     module = model.module if hasattr(model, "module") else model
     orth_opt = None
     if args.orthogonal_type != "none":
-        orth_opt = SOOptimizer(
+        orth_opt = get_so_optimizer(
             module.chunk_weights,
             lr=args.lr * args.so_lr,
             betas=(args.orth_beta1, args.orth_beta2),
             eps=args.orth_eps,
-            num_submatrices=args.num_submatrices
+            num_submatrices=args.num_submatrices,
+            method=args.so_method,
         )
 
     optimizer.zero_grad(set_to_none=True)
