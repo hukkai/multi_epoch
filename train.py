@@ -126,7 +126,7 @@ def load_config(config_path: str) -> argparse.Namespace:
     if coerced_config["orthogonal_type"] not in ORTHOGONAL_TYPE_CHOICES:
         choices = ", ".join(sorted(ORTHOGONAL_TYPE_CHOICES))
         raise ValueError(f"orthogonal_type must be one of: {choices}")
-    
+
     if "transpose_o" not in coerced_config and coerced_config["orthogonal_type"] != "none":
         coerced_config["transpose_o"] = False
 
