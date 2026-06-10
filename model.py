@@ -19,6 +19,7 @@ class LlamaConfig:
     rms_norm_eps: float = 1e-6
     attention_dropout: float = 0.0
     tie_word_embeddings: bool = False
+    transpose_o: bool = False
 
     def __post_init__(self) -> None:
         if self.hidden_size % self.num_heads != 0:
@@ -131,6 +132,7 @@ class ChunkedAttention(nn.Module):
         self.head_dim = config.head_dim
         self.hidden_size = config.hidden_size
         self.attention_dropout = config.attention_dropout
+        self.transpose_o = config.transpose_o
 
     def forward(self, x: torch.Tensor, weights: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
         batch_size, seq_len, hidden_size = x.shape
@@ -149,6 +151,8 @@ class ChunkedAttention(nn.Module):
             is_causal=True,
         )
         attn_output = attn_output.transpose(1, 2).contiguous().view(batch_size, seq_len, hidden_size)
+        if self.transpose_o:
+            o_w = o_w.T
         return F.linear(attn_output, o_w)
 
 

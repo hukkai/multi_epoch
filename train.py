@@ -15,7 +15,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from model import LlamaConfig, build_model
 from utils import (
     AverageMeter,
-    get_so_optimizer,
+    SOOptimizer,
     cosine_lr,
     get_param_groups,
     init_distributed,
@@ -25,7 +25,7 @@ from utils import (
 )
 
 
-DEFAULT_CONFIG_PATH = "configs/0.5B/adamw_20k.yaml"
+DEFAULT_CONFIG_PATH = "configs/0.5B/adamw_21k.yaml"
 
 CONFIG_TYPES = {
     "data_dir": str,
@@ -57,7 +57,7 @@ CONFIG_TYPES = {
     "orth_beta1": float,
     "orth_beta2": float,
     "orth_eps": float,
-    "so_method": str,
+    "transpose_o": bool,
 }
 
 ORTHOGONAL_TYPE_CHOICES = {"none", "mlp", "atten", "all"}
@@ -67,7 +67,7 @@ ORTHOGONAL_CONFIG_KEYS = {
     "orth_beta1",
     "orth_beta2",
     "orth_eps",
-    "so_method",
+    "transpose_o",
 }
 
 
@@ -126,6 +126,9 @@ def load_config(config_path: str) -> argparse.Namespace:
     if coerced_config["orthogonal_type"] not in ORTHOGONAL_TYPE_CHOICES:
         choices = ", ".join(sorted(ORTHOGONAL_TYPE_CHOICES))
         raise ValueError(f"orthogonal_type must be one of: {choices}")
+    
+    if "transpose_o" not in coerced_config and coerced_config["orthogonal_type"] != "none":
+        coerced_config["transpose_o"] = False
 
     return argparse.Namespace(config=config_path, **coerced_config)
 
@@ -227,6 +230,7 @@ def main() -> None:
             config,
             orthogonal_type=args.orthogonal_type,
             init_chunk_weights=init_chunk_weights,
+            transpose_o=args.transpose_o,
         )
     model = model.to(device)
     if distributed:
@@ -236,13 +240,12 @@ def main() -> None:
     module = model.module if hasattr(model, "module") else model
     orth_opt = None
     if args.orthogonal_type != "none":
-        orth_opt = get_so_optimizer(
+        orth_opt = SOOptimizer(
             module.chunk_weights,
             lr=args.lr * args.so_lr,
             betas=(args.orth_beta1, args.orth_beta2),
             eps=args.orth_eps,
             num_submatrices=args.num_submatrices,
-            method=args.so_method,
         )
 
     optimizer.zero_grad(set_to_none=True)
