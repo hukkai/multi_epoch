@@ -168,6 +168,7 @@ def build_config(args: argparse.Namespace) -> LlamaConfig:
         rms_norm_eps=args.rms_norm_eps,
         attention_dropout=args.attention_dropout,
         tie_word_embeddings=args.tie_word_embeddings,
+        transpose_o=args.transpose_o if args.orthogonal_type != "none" else False,
     )
 
 
