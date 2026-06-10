@@ -54,7 +54,7 @@ class SOOptimizer:
         eps: float = 1e-8,
         num_submatrices: int = 8,
         strict_stiefel: bool = True,
-        cg_steps: int = 3,
+        cg_steps: int = 20,
     ) -> None:
         self.param = param
         self.lr = lr
