@@ -25,7 +25,7 @@ from utils import (
 )
 
 
-DEFAULT_CONFIG_PATH = "configs/0.5B/adamw_21k.yaml"
+DEFAULT_CONFIG_PATH = "configs/0.5B/adamw_20k.yaml"
 
 CONFIG_TYPES = {
     "data_dir": str,
@@ -230,7 +230,6 @@ def main() -> None:
             config,
             orthogonal_type=args.orthogonal_type,
             init_chunk_weights=init_chunk_weights,
-            transpose_o=args.transpose_o,
         )
     model = model.to(device)
     if distributed:
