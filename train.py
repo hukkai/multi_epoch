@@ -25,7 +25,7 @@ from utils import (
 )
 
 
-DEFAULT_CONFIG_PATH = "configs/0.5B/adamw_20k.yaml"
+DEFAULT_CONFIG_PATH = "configs/0.5B/adamw_21k.yaml"
 
 CONFIG_TYPES = {
     "data_dir": str,
