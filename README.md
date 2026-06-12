@@ -19,3 +19,10 @@ bash run.sh configs/muon/muon_21k_d2.yaml
 ```
 bash run.sh configs/muon/muon_21k_x2.yaml
 ```
+
+Ours:
+
+```
+bash run.sh configs/muon/muon_orth_21k.yaml
+```
+
