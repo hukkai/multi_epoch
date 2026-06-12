@@ -32,4 +32,5 @@ muon_weight_decay: 0.1
 muon_nesterov: true
 muon_ns_steps: 5
 muon_eps: 1e-7
+ortho_update: False
 transpose_o: False
