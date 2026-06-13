@@ -20,9 +20,21 @@ bash run.sh configs/muon/muon_21k_d2.yaml
 bash run.sh configs/muon/muon_21k_x2.yaml
 ```
 
-Ours:
+
+
+New:
+
+tag: new-muon
 
 ```
 bash run.sh configs/muon/muon_orth_21k.yaml
+```
+
+```
+bash run.sh configs/muon/muon_orth_21k_n16.yaml
+```
+
+```
+bash run.sh configs/muon/muon_orth_21k_n16_0wd.yaml
 ```
 
