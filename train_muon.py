@@ -61,6 +61,7 @@ CONFIG_TYPES = {
     "muon_ns_steps": int,
     "muon_eps": float,
     "ortho_update": bool,
+    "simple_update": bool,
     "num_submatrices": int,
     "transpose_o": bool,
 }
@@ -75,6 +76,7 @@ MUON_CONFIG_KEYS = {
     "muon_ns_steps",
     "muon_eps",
     "ortho_update",
+    "simple_update",
     "num_submatrices",
     "transpose_o",
 }
@@ -122,7 +124,9 @@ def load_config(config_path: str) -> argparse.Namespace:
     if config.get("orthogonal_type") == "none":
         required_keys = expected_keys - MUON_CONFIG_KEYS
     elif config.get("ortho_update") is not True:
-        required_keys = expected_keys - {"num_submatrices"}
+        required_keys = expected_keys - {"num_submatrices", "simple_update"}
+    else:
+        required_keys = expected_keys - {"simple_update"}
 
     missing_keys = sorted(required_keys - set(config))
     if missing_keys:
@@ -140,6 +144,8 @@ def load_config(config_path: str) -> argparse.Namespace:
 
     if "transpose_o" not in coerced_config and coerced_config["orthogonal_type"] != "none":
         coerced_config["transpose_o"] = False
+    if "simple_update" not in coerced_config and coerced_config.get("ortho_update") is True:
+        coerced_config["simple_update"] = False
 
     return argparse.Namespace(config=config_path, **coerced_config)
 
@@ -169,6 +175,7 @@ def create_muon_optimizer(args: argparse.Namespace, model: torch.nn.Module) -> M
     kwargs = {}
     if args.ortho_update:
         kwargs["num_submatrices"] = args.num_submatrices
+        kwargs["simple_update"] = args.simple_update
 
     return optimizer_cls(
         [model.chunk_weights],
