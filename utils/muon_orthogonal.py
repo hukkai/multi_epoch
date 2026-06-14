@@ -11,16 +11,6 @@ from .ops import polar
 from .polar_taylor import stiefel_update_taylor
 
 
-def l2_normalize(x: torch.Tensor, 
-                 num_steps: int = 10,
-                 eps: float = 1e-12
-                 ) -> torch.Tensor:
-    for _ in range(num_steps):
-        x = x / x.norm(dim=-2, keepdim=True).clamp_min(eps)
-        x = x / x.norm(dim=-1, keepdim=True).clamp_min(eps)
-    return x
-
-
 class MuonOrthogonal(torch.optim.Optimizer):
     def __init__(
         self,
@@ -34,7 +24,6 @@ class MuonOrthogonal(torch.optim.Optimizer):
         eps: float = 1e-7,
         num_submatrices: int = 8,
         strict_stiefel: bool = True,
-        simple_update: bool = False,
     ) -> None:
         if lr < 0.0:
             raise ValueError(f"Invalid learning rate: {lr}")
@@ -61,7 +50,6 @@ class MuonOrthogonal(torch.optim.Optimizer):
             "eps": eps,
             "num_submatrices": num_submatrices,
             "strict_stiefel": strict_stiefel,
-            "simple_update": simple_update,
         }
         super().__init__(params, defaults)
 
@@ -118,7 +106,6 @@ class MuonOrthogonal(torch.optim.Optimizer):
             eps = group["eps"]
             num_submatrices = group["num_submatrices"]
             strict_stiefel = group["strict_stiefel"]
-            simple_update = group["simple_update"]
 
             for param in group["params"]:
                 if param.grad is None:
@@ -145,10 +132,8 @@ class MuonOrthogonal(torch.optim.Optimizer):
 
                 update = torch.lerp(grad, buffer, momentum) if nesterov else buffer
 
-                if not simple_update:
-                    update = orthogonalize_newton_schulz(update, steps=ns_steps, eps=eps)
-                else:
-                    update = l2_normalize(update, num_steps=ns_steps * 2, eps=eps)
+                update = orthogonalize_newton_schulz(update, steps=ns_steps, eps=eps)
+
 
                 scale = 0.2 * math.sqrt(dim)
                 if weight_decay != 0.0:
