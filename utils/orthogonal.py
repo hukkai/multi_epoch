@@ -5,6 +5,7 @@ import torch.distributed as dist
 
 from .ops import polar
 from .polar_taylor import stiefel_update_taylor
+from .scaled_row_stiefel import retract_scaled_row_stiefel, scaled_row_stiefel_update
 
 
 class SOOptimizer:
@@ -16,12 +17,14 @@ class SOOptimizer:
         eps: float = 1e-8,
         num_submatrices: int = 8,
         strict_stiefel: bool = True,
+        allow_scaled_row_stiefel: bool = False,
     ) -> None:
         self.param = param
         self.lr = lr
         self.beta1, self.beta2 = betas
         self.eps = eps
         self.strict_stiefel = strict_stiefel
+        self.allow_scaled_row_stiefel = allow_scaled_row_stiefel
         self.dim = param.shape[1]
         self.orth_dim = self.dim // num_submatrices
 
@@ -66,12 +69,16 @@ class SOOptimizer:
 
         update = -lr * m_hat / (v_hat.sqrt() + self.eps)
 
-        new_x = stiefel_update_taylor(x, update)
+        if self.allow_scaled_row_stiefel:
+            new_x = scaled_row_stiefel_update(x, update, eps=self.eps)
+            if is_last and self.strict_stiefel:
+                new_x = retract_scaled_row_stiefel(new_x, eps=self.eps)
+        else:
+            new_x = stiefel_update_taylor(x, update)
+            if is_last and self.strict_stiefel:
+                new_x = polar(new_x)
 
-        if is_last and self.strict_stiefel:
-            new_x = polar(new_x)
-
-        new_x = new_x.reshape(-1, self.dim, self.dim)
+        new_x = new_x.reshape(-1, self.dim, self.dim).to(dtype=self.param.dtype)
 
         if dist.is_initialized():
             dist.all_gather_into_tensor(self.param.data, new_x.contiguous())

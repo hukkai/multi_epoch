@@ -57,7 +57,12 @@ CONFIG_TYPES = {
     "orth_beta1": float,
     "orth_beta2": float,
     "orth_eps": float,
+    "allow_scaled_row_stiefel": bool,
     "transpose_o": bool,
+}
+
+OPTIONAL_CONFIG_DEFAULTS = {
+    "allow_scaled_row_stiefel": False,
 }
 
 ORTHOGONAL_TYPE_CHOICES = {"none", "mlp", "atten", "all"}
@@ -67,6 +72,7 @@ ORTHOGONAL_CONFIG_KEYS = {
     "orth_beta1",
     "orth_beta2",
     "orth_eps",
+    "allow_scaled_row_stiefel",
     "transpose_o",
 }
 
@@ -109,9 +115,10 @@ def load_config(config_path: str) -> argparse.Namespace:
     if unknown_keys:
         raise ValueError(f"Unknown config keys in {config_path}: {', '.join(unknown_keys)}")
 
-    required_keys = expected_keys
+    required_keys = expected_keys - set(OPTIONAL_CONFIG_DEFAULTS)
     if config.get("orthogonal_type") == "none":
         required_keys = expected_keys - ORTHOGONAL_CONFIG_KEYS
+    required_keys -= set(OPTIONAL_CONFIG_DEFAULTS)
 
     missing_keys = sorted(required_keys - set(config))
     if missing_keys:
@@ -122,6 +129,8 @@ def load_config(config_path: str) -> argparse.Namespace:
         for key in CONFIG_TYPES
         if key in config
     }
+    for key, value in OPTIONAL_CONFIG_DEFAULTS.items():
+        coerced_config.setdefault(key, value)
 
     if coerced_config["orthogonal_type"] not in ORTHOGONAL_TYPE_CHOICES:
         choices = ", ".join(sorted(ORTHOGONAL_TYPE_CHOICES))
@@ -246,6 +255,7 @@ def main() -> None:
             betas=(args.orth_beta1, args.orth_beta2),
             eps=args.orth_eps,
             num_submatrices=args.num_submatrices,
+            allow_scaled_row_stiefel=args.allow_scaled_row_stiefel,
         )
 
     optimizer.zero_grad(set_to_none=True)

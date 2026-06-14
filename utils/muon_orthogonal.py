@@ -9,6 +9,7 @@ import torch.distributed as dist
 from .muon import orthogonalize_newton_schulz
 from .ops import polar
 from .polar_taylor import stiefel_update_taylor
+from .scaled_row_stiefel import retract_scaled_row_stiefel, scaled_row_stiefel_update
 
 
 class MuonOrthogonal(torch.optim.Optimizer):
@@ -24,6 +25,7 @@ class MuonOrthogonal(torch.optim.Optimizer):
         eps: float = 1e-7,
         num_submatrices: int = 8,
         strict_stiefel: bool = True,
+        allow_scaled_row_stiefel: bool = False,
     ) -> None:
         if lr < 0.0:
             raise ValueError(f"Invalid learning rate: {lr}")
@@ -50,6 +52,7 @@ class MuonOrthogonal(torch.optim.Optimizer):
             "eps": eps,
             "num_submatrices": num_submatrices,
             "strict_stiefel": strict_stiefel,
+            "allow_scaled_row_stiefel": allow_scaled_row_stiefel,
         }
         super().__init__(params, defaults)
 
@@ -106,6 +109,7 @@ class MuonOrthogonal(torch.optim.Optimizer):
             eps = group["eps"]
             num_submatrices = group["num_submatrices"]
             strict_stiefel = group["strict_stiefel"]
+            allow_scaled_row_stiefel = group.get("allow_scaled_row_stiefel", False)
 
             for param in group["params"]:
                 if param.grad is None:
@@ -134,17 +138,20 @@ class MuonOrthogonal(torch.optim.Optimizer):
 
                 update = orthogonalize_newton_schulz(update, steps=ns_steps, eps=eps)
 
-
                 scale = 0.2 * math.sqrt(dim)
                 if weight_decay != 0.0:
                     param_slice.mul_(1.0 - decay_lr * weight_decay)
 
                 x = param_slice.reshape(-1, orth_dim, dim)
                 update = update.reshape_as(x).mul_(-lr * scale)
-                new_x = stiefel_update_taylor(x, update)
-
-                if is_last and strict_stiefel:
-                    new_x = polar(new_x)
+                if allow_scaled_row_stiefel:
+                    new_x = scaled_row_stiefel_update(x, update, eps=eps)
+                    if is_last and strict_stiefel:
+                        new_x = retract_scaled_row_stiefel(new_x, eps=eps)
+                else:
+                    new_x = stiefel_update_taylor(x, update)
+                    if is_last and strict_stiefel:
+                        new_x = polar(new_x)
 
                 new_param_slice = new_x.reshape_as(param_slice).to(dtype=param.dtype)
                 if world_size > 1:
