@@ -57,7 +57,6 @@ CONFIG_TYPES = {
     "orth_beta1": float,
     "orth_beta2": float,
     "orth_eps": float,
-    "transpose_o": bool,
 }
 
 OPTIONAL_CONFIG_DEFAULTS = {}
@@ -69,7 +68,6 @@ ORTHOGONAL_CONFIG_KEYS = {
     "orth_beta1",
     "orth_beta2",
     "orth_eps",
-    "transpose_o",
 }
 
 
@@ -132,9 +130,6 @@ def load_config(config_path: str) -> argparse.Namespace:
         choices = ", ".join(sorted(ORTHOGONAL_TYPE_CHOICES))
         raise ValueError(f"orthogonal_type must be one of: {choices}")
 
-    if "transpose_o" not in coerced_config and coerced_config["orthogonal_type"] != "none":
-        coerced_config["transpose_o"] = False
-
     return argparse.Namespace(config=config_path, **coerced_config)
 
 
@@ -173,7 +168,6 @@ def build_config(args: argparse.Namespace) -> LlamaConfig:
         rms_norm_eps=args.rms_norm_eps,
         attention_dropout=args.attention_dropout,
         tie_word_embeddings=args.tie_word_embeddings,
-        transpose_o=args.transpose_o if args.orthogonal_type != "none" else False,
     )
 
 

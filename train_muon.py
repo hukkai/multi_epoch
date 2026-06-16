@@ -60,12 +60,14 @@ CONFIG_TYPES = {
     "muon_nesterov": bool,
     "muon_ns_steps": int,
     "muon_eps": float,
+    "muon_norm_log_interval": int,
     "ortho_update": bool,
     "num_submatrices": int,
-    "transpose_o": bool,
 }
 
-OPTIONAL_CONFIG_DEFAULTS = {}
+OPTIONAL_CONFIG_DEFAULTS = {
+    "muon_norm_log_interval": 0,
+}
 
 ORTHOGONAL_TYPE_CHOICES = {"none", "mlp", "atten", "all"}
 MUON_CONFIG_KEYS = {
@@ -76,9 +78,9 @@ MUON_CONFIG_KEYS = {
     "muon_nesterov",
     "muon_ns_steps",
     "muon_eps",
+    "muon_norm_log_interval",
     "ortho_update",
     "num_submatrices",
-    "transpose_o",
 }
 
 
@@ -143,10 +145,6 @@ def load_config(config_path: str) -> argparse.Namespace:
         choices = ", ".join(sorted(ORTHOGONAL_TYPE_CHOICES))
         raise ValueError(f"orthogonal_type must be one of: {choices}")
 
-    if "transpose_o" not in coerced_config and coerced_config["orthogonal_type"] != "none":
-        coerced_config["transpose_o"] = False
-
-
     return argparse.Namespace(config=config_path, **coerced_config)
 
 
@@ -175,6 +173,7 @@ def create_muon_optimizer(args: argparse.Namespace, model: torch.nn.Module) -> M
     kwargs = {}
     if args.ortho_update:
         kwargs["num_submatrices"] = args.num_submatrices
+        kwargs["norm_log_interval"] = args.muon_norm_log_interval
 
     return optimizer_cls(
         [model.chunk_weights],

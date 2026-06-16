@@ -34,4 +34,3 @@ muon_ns_steps: 5
 muon_eps: 1e-7
 ortho_update: True
 num_submatrices: 64
-transpose_o: False

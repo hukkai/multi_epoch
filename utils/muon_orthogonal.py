@@ -8,7 +8,42 @@ import torch.distributed as dist
 
 from .muon import orthogonalize_newton_schulz
 from .ops import polar
-from .polar_taylor import stiefel_update_taylor
+from .polar_taylor import stiefel_update_taylor, stiefel_project
+
+
+@torch.no_grad()
+def fast_spectral_norm(
+    x: torch.Tensor,
+    n_iter: int = 10,
+    eps: float = 1e-12,
+) -> torch.Tensor:
+    """
+    Estimate spectral norm for x with shape (n, m, m).
+
+    Returns:
+        sigma: shape (n,), where sigma[i] ~= ||x[i]||_2
+
+    """
+    assert x.ndim == 3
+    assert x.shape[-1] == x.shape[-2]
+
+    n, m, _ = x.shape
+
+    # v: (n, m, 1)
+    v = torch.randn(n, m, 1, device=x.device, dtype=x.dtype)
+    v = v / v.norm(dim=1, keepdim=True).clamp_min(eps)
+
+    for _ in range(n_iter):
+        # u <- normalize(X v)
+        u = torch.bmm(x, v)  # (n, m, 1)
+        u = u / u.norm(dim=1, keepdim=True).clamp_min(eps)
+
+        # v <- normalize(X^T u)
+        v = torch.bmm(x.mT, u)  # (n, m, 1)
+        v = v / v.norm(dim=1, keepdim=True).clamp_min(eps)
+
+    sigma = torch.bmm(x, v).norm(dim=1).squeeze(-1)  # (n,)
+    return sigma
 
 
 class MuonOrthogonal(torch.optim.Optimizer):
@@ -24,6 +59,7 @@ class MuonOrthogonal(torch.optim.Optimizer):
         eps: float = 1e-7,
         num_submatrices: int = 8,
         strict_stiefel: bool = True,
+        norm_log_interval: int = 0,
     ) -> None:
         if lr < 0.0:
             raise ValueError(f"Invalid learning rate: {lr}")
@@ -39,6 +75,8 @@ class MuonOrthogonal(torch.optim.Optimizer):
             raise ValueError(f"Invalid eps value: {eps}")
         if num_submatrices <= 0:
             raise ValueError(f"Invalid num_submatrices value: {num_submatrices}")
+        if norm_log_interval < 0:
+            raise ValueError(f"Invalid norm_log_interval value: {norm_log_interval}")
 
         defaults = {
             "lr": lr,
@@ -50,8 +88,10 @@ class MuonOrthogonal(torch.optim.Optimizer):
             "eps": eps,
             "num_submatrices": num_submatrices,
             "strict_stiefel": strict_stiefel,
+            "norm_log_interval": norm_log_interval,
         }
         super().__init__(params, defaults)
+        self._norm_log_step = 0
 
     @staticmethod
     def _distributed_context() -> tuple[int, int]:
@@ -85,6 +125,40 @@ class MuonOrthogonal(torch.optim.Optimizer):
         per_rank = param.shape[0] // world_size
         return slice(rank * per_rank, (rank + 1) * per_rank)
 
+    @staticmethod
+    def _norm_summary(
+        fro_norm: torch.Tensor,
+        spectral_norm: torch.Tensor,
+        world_size: int,
+    ) -> tuple[float, float, float, float]:
+        fro_norm = fro_norm.double()
+        spectral_norm = spectral_norm.double()
+        sum_count = torch.stack(
+            [
+                fro_norm.sum(),
+                spectral_norm.sum(),
+                fro_norm.new_tensor(float(fro_norm.numel())),
+            ]
+        )
+        maxes = torch.stack(
+            [
+                fro_norm.double().max(),
+                spectral_norm.double().max(),
+            ]
+        )
+
+        if world_size > 1:
+            dist.all_reduce(sum_count, op=dist.ReduceOp.SUM)
+            dist.all_reduce(maxes, op=dist.ReduceOp.MAX)
+
+        count = max(sum_count[2].item(), 1.0)
+        return (
+            sum_count[0].item() / count,
+            maxes[0].item(),
+            sum_count[1].item() / count,
+            maxes[1].item(),
+        )
+
     @torch.no_grad()
     def step(self, closure: Any | None = None, is_last: bool = False) -> Any | None:
         loss = None
@@ -93,6 +167,7 @@ class MuonOrthogonal(torch.optim.Optimizer):
                 loss = closure()
 
         world_size, rank = self._distributed_context()
+        self._norm_log_step += 1
 
         for group in self.param_groups:
             lr = group["lr"]
@@ -106,6 +181,10 @@ class MuonOrthogonal(torch.optim.Optimizer):
             eps = group["eps"]
             num_submatrices = group["num_submatrices"]
             strict_stiefel = group["strict_stiefel"]
+            norm_log_interval = group["norm_log_interval"]
+            log_norms = norm_log_interval > 0 and (
+                self._norm_log_step == 1 or self._norm_log_step % norm_log_interval == 0
+            )
 
             for param in group["params"]:
                 if param.grad is None:
@@ -139,8 +218,29 @@ class MuonOrthogonal(torch.optim.Optimizer):
                     param_slice.mul_(1.0 - decay_lr * weight_decay)
 
                 x = param_slice.reshape(-1, orth_dim, dim)
-                update = update.reshape_as(x).mul_(-lr * scale)
-                new_x = stiefel_update_taylor(x, update)
+                update = update.reshape_as(x)
+                update = stiefel_project(x, update)
+
+                if log_norms:
+                    update_with_old_shape = update.reshape_as(grad)
+                    fro_norm = torch.linalg.norm(update_with_old_shape, dim=(-2, -1), ord="fro")
+                    spectral_norm = fast_spectral_norm(update_with_old_shape)
+                    fro_mean, fro_max, spectral_mean, spectral_max = self._norm_summary(
+                        fro_norm,
+                        spectral_norm,
+                        world_size,
+                    )
+                    if rank == 0:
+                        print(
+                            f"MuonOrthogonal step {self._norm_log_step:06d} projected update norms "
+                            f"fro_mean={fro_mean:.6e} fro_max={fro_max:.6e} "
+                            f"spectral_mean={spectral_mean:.6e} spectral_max={spectral_max:.6e}",
+                            flush=True,
+                        )
+
+                update.mul_(-lr * scale)
+
+                new_x = stiefel_update_taylor(x, update, projected=True)
                 if is_last and strict_stiefel:
                     new_x = polar(new_x)
 
