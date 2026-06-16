@@ -51,6 +51,7 @@ CONFIG_TYPES = {
     "num_steps": int,
     "lr": float,
     "min_lr": float,
+    "cosine_power": float,
     "weight_decay": float,
     "clip_grad": float,
     "muon_lr": float,
@@ -67,6 +68,7 @@ CONFIG_TYPES = {
 
 OPTIONAL_CONFIG_DEFAULTS = {
     "muon_norm_log_interval": 0,
+    "cosine_power": 1.0,
 }
 
 ORTHOGONAL_TYPE_CHOICES = {"none", "mlp", "atten", "all"}
@@ -245,12 +247,12 @@ def main() -> None:
 
     for micro_step in range(start_micro_step, total_micro_steps):
         step = micro_step // accum_steps
-        lr = cosine_lr(step, args.num_steps, warmup_steps, args.lr, args.min_lr)
+        lr = cosine_lr(step, args.num_steps, warmup_steps, args.lr, args.min_lr, args.cosine_power)
         muon_lr = None
         for param_group in optimizer.param_groups:
             param_group["lr"] = lr
         if muon_optimizer is not None:
-            muon_lr = cosine_lr(step, args.num_steps, warmup_steps, args.muon_lr, args.muon_min_lr)
+            muon_lr = cosine_lr(step, args.num_steps, warmup_steps, args.muon_lr, args.muon_min_lr, args.cosine_power)
             for param_group in muon_optimizer.param_groups:
                 param_group["lr"] = muon_lr
                 param_group["decay_lr"] = lr
