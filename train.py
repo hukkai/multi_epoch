@@ -57,13 +57,10 @@ CONFIG_TYPES = {
     "orth_beta1": float,
     "orth_beta2": float,
     "orth_eps": float,
-    "allow_scaled_row_stiefel": bool,
     "transpose_o": bool,
 }
 
-OPTIONAL_CONFIG_DEFAULTS = {
-    "allow_scaled_row_stiefel": False,
-}
+OPTIONAL_CONFIG_DEFAULTS = {}
 
 ORTHOGONAL_TYPE_CHOICES = {"none", "mlp", "atten", "all"}
 ORTHOGONAL_CONFIG_KEYS = {
@@ -72,7 +69,6 @@ ORTHOGONAL_CONFIG_KEYS = {
     "orth_beta1",
     "orth_beta2",
     "orth_eps",
-    "allow_scaled_row_stiefel",
     "transpose_o",
 }
 
@@ -255,7 +251,6 @@ def main() -> None:
             betas=(args.orth_beta1, args.orth_beta2),
             eps=args.orth_eps,
             num_submatrices=args.num_submatrices,
-            allow_scaled_row_stiefel=args.allow_scaled_row_stiefel,
         )
 
     optimizer.zero_grad(set_to_none=True)

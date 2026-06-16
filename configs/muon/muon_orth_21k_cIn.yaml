@@ -34,5 +34,4 @@ muon_ns_steps: 5
 muon_eps: 1e-7
 ortho_update: True
 num_submatrices: 64
-allow_scaled_row_stiefel: True
 transpose_o: False

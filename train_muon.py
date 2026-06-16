@@ -62,13 +62,10 @@ CONFIG_TYPES = {
     "muon_eps": float,
     "ortho_update": bool,
     "num_submatrices": int,
-    "allow_scaled_row_stiefel": bool,
     "transpose_o": bool,
 }
 
-OPTIONAL_CONFIG_DEFAULTS = {
-    "allow_scaled_row_stiefel": False,
-}
+OPTIONAL_CONFIG_DEFAULTS = {}
 
 ORTHOGONAL_TYPE_CHOICES = {"none", "mlp", "atten", "all"}
 MUON_CONFIG_KEYS = {
@@ -81,7 +78,6 @@ MUON_CONFIG_KEYS = {
     "muon_eps",
     "ortho_update",
     "num_submatrices",
-    "allow_scaled_row_stiefel",
     "transpose_o",
 }
 
@@ -179,7 +175,6 @@ def create_muon_optimizer(args: argparse.Namespace, model: torch.nn.Module) -> M
     kwargs = {}
     if args.ortho_update:
         kwargs["num_submatrices"] = args.num_submatrices
-        kwargs["allow_scaled_row_stiefel"] = getattr(args, "allow_scaled_row_stiefel", False)
 
     return optimizer_cls(
         [model.chunk_weights],
