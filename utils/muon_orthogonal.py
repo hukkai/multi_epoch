@@ -233,8 +233,8 @@ class MuonOrthogonal(torch.optim.Optimizer):
                     if rank == 0:
                         print(
                             f"MuonOrthogonal step {self._norm_log_step:06d} projected update norms "
-                            f"fro_mean={fro_mean:.6e} fro_max={fro_max:.6e} "
-                            f"spectral_mean={spectral_mean:.6e} spectral_max={spectral_max:.6e}",
+                            f"fro_mean={fro_mean:.3e} fro_max={fro_max:.3e} "
+                            f"spectral_mean={spectral_mean:.3e} spectral_max={spectral_max:.3e}",
                             flush=True,
                         )
 
