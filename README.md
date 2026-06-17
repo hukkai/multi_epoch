@@ -3,9 +3,13 @@
 tag: no_name
 
 ```
-bash run.sh configs/muon/muon_orth_21k_log_norm.yaml
+bash run.sh configs/muon/muon_orth_21k_spectral_cap.yaml
 ```
 
 ```
-bash run.sh configs/muon/muon_orth_21k_lr2.yaml
+bash run.sh configs/muon/muon_orth_21k_fro_cap.yaml
+```
+
+```
+bash run.sh configs/muon/muon_21k_lr2.yaml
 ```

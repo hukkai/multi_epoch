@@ -61,17 +61,18 @@ CONFIG_TYPES = {
     "muon_nesterov": bool,
     "muon_ns_steps": int,
     "muon_eps": float,
-    "muon_norm_log_interval": int,
+    "norm_cap": str,
     "ortho_update": bool,
     "num_submatrices": int,
 }
 
 OPTIONAL_CONFIG_DEFAULTS = {
-    "muon_norm_log_interval": 0,
     "cosine_power": 1.0,
+    "norm_cap": "none",
 }
 
 ORTHOGONAL_TYPE_CHOICES = {"none", "mlp", "atten", "all"}
+NORM_CAP_CHOICES = {"none", "fro", "spectral"}
 MUON_CONFIG_KEYS = {
     "muon_lr",
     "muon_min_lr",
@@ -80,7 +81,7 @@ MUON_CONFIG_KEYS = {
     "muon_nesterov",
     "muon_ns_steps",
     "muon_eps",
-    "muon_norm_log_interval",
+    "norm_cap",
     "ortho_update",
     "num_submatrices",
 }
@@ -146,6 +147,10 @@ def load_config(config_path: str) -> argparse.Namespace:
     if coerced_config["orthogonal_type"] not in ORTHOGONAL_TYPE_CHOICES:
         choices = ", ".join(sorted(ORTHOGONAL_TYPE_CHOICES))
         raise ValueError(f"orthogonal_type must be one of: {choices}")
+    coerced_config["norm_cap"] = coerced_config["norm_cap"].lower()
+    if coerced_config["norm_cap"] not in NORM_CAP_CHOICES:
+        choices = ", ".join(sorted(NORM_CAP_CHOICES))
+        raise ValueError(f"norm_cap must be one of: {choices}")
 
     return argparse.Namespace(config=config_path, **coerced_config)
 
@@ -175,7 +180,7 @@ def create_muon_optimizer(args: argparse.Namespace, model: torch.nn.Module) -> M
     kwargs = {}
     if args.ortho_update:
         kwargs["num_submatrices"] = args.num_submatrices
-        kwargs["norm_log_interval"] = args.muon_norm_log_interval
+        kwargs["norm_cap"] = args.norm_cap
 
     return optimizer_cls(
         [model.chunk_weights],
