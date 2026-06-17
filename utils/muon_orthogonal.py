@@ -141,7 +141,12 @@ class MuonOrthogonal(torch.optim.Optimizer):
 
         update_full = update.reshape(original_shape)
         if norm_cap == "fro":
-            denom = torch.linalg.norm(update_full, dim=(-2, -1), ord="fro", keepdim=True).clamp_min(eps)
+            target_norm = math.sqrt(update_full.shape[-1])
+            denom = (
+                torch.linalg.norm(update_full, dim=(-2, -1), ord="fro", keepdim=True)
+                .div(target_norm)
+                .clamp_min(eps)
+            )
         elif norm_cap == "spectral":
             denom = fast_spectral_norm(update_full).clamp_min(1.0).sqrt().view(-1, 1, 1)
         else:
