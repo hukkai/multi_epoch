@@ -1,15 +1,11 @@
 # ortho_llm
 
-tag: no_name
+tag: max-lr
 
 ```
-bash run.sh configs/muon/muon_orth_21k_spectral_cap.yaml
-```
-
-```
-bash run.sh configs/muon/muon_orth_21k_fro_cap.yaml
+bash run.sh configs/muon/muon_orth_21k_maxd2.yaml
 ```
 
 ```
-bash run.sh configs/muon/muon_21k_lr2.yaml
+bash run.sh configs/muon/muon_orth_21k_maxd1.5.yaml
 ```
