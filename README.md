@@ -1,25 +1,15 @@
 # ortho_llm
 
-tag: swap-lr
-
-
-```
-bash run.sh configs/0.5B/adamw_21k.yaml
-```
+tag: no_name
 
 ```
-bash run.sh configs/0.5B/adamw_21k_d2.yaml
+bash run.sh configs/muon/muon_orth_21k_spectral_cap.yaml
 ```
 
 ```
-bash run.sh configs/0.5B/ortho_21k.yaml
+bash run.sh configs/muon/muon_orth_21k_fro_cap.yaml
 ```
 
 ```
-bash run.sh configs/0.5B/ortho_21k_d2.yaml
-```
-
-
-```
-bash run.sh configs/0.5B/ortho_21k_to.yaml
+bash run.sh configs/muon/muon_21k_lr2.yaml
 ```

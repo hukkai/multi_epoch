@@ -1,5 +1,7 @@
 from .distributed import init_distributed, is_main_process
 from .misc import AverageMeter, save_checkpoint, set_seed
+from .muon import Muon, orthogonalize_newton_schulz
+from .muon_orthogonal import MuonOrthogonal
 from .optimizer import get_param_groups
 from .orthogonal import SOOptimizer
 from .scheduler import cosine_lr
@@ -10,6 +12,9 @@ __all__ = [
     "AverageMeter",
     "save_checkpoint",
     "set_seed",
+    "Muon",
+    "MuonOrthogonal",
+    "orthogonalize_newton_schulz",
     "get_param_groups",
     "SOOptimizer",
     "cosine_lr",

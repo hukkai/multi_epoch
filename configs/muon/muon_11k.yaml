@@ -19,14 +19,17 @@ tie_word_embeddings: True
 batch_size: 8
 global_batch_size: 512
 seq_length: 2048
-num_steps: 21000
-lr: 3.0e-4
-min_lr: 3.0e-5
+num_steps: 11000
+lr: 1.2e-3
+min_lr: 1.2e-4
 weight_decay: 0.1
 clip_grad: 1.0
 
-so_lr: 1.0
-num_submatrices: 64
-orth_beta1: 0.9
-orth_beta2: 0.95
-orth_eps: 1e-8
+muon_lr: 2.0e-3
+muon_min_lr: 2.0e-4
+muon_momentum: 0.95
+muon_weight_decay: 0.1
+muon_nesterov: true
+muon_ns_steps: 5
+muon_eps: 1e-7
+ortho_update: False

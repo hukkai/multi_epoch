@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import os
 import time
 from contextlib import nullcontext
 from typing import Any
@@ -12,10 +11,12 @@ import torch.distributed as dist
 import yaml
 from torch.nn.parallel import DistributedDataParallel as DDP
 
-from model import LlamaConfig, build_model
+from model import build_model
+from train import build_config, load_micro_batch, resolve_data_path
 from utils import (
     AverageMeter,
-    SOOptimizer,
+    Muon,
+    MuonOrthogonal,
     cosine_lr,
     get_param_groups,
     init_distributed,
@@ -25,7 +26,7 @@ from utils import (
 )
 
 
-DEFAULT_CONFIG_PATH = "configs/0.5B/adamw_21k.yaml"
+DEFAULT_CONFIG_PATH = "configs/muon/muon_21k.yaml"
 
 CONFIG_TYPES = {
     "data_dir": str,
@@ -50,24 +51,39 @@ CONFIG_TYPES = {
     "num_steps": int,
     "lr": float,
     "min_lr": float,
+    "cosine_power": float,
     "weight_decay": float,
     "clip_grad": float,
-    "so_lr": float,
+    "muon_lr": float,
+    "muon_min_lr": float,
+    "muon_momentum": float,
+    "muon_weight_decay": float,
+    "muon_nesterov": bool,
+    "muon_ns_steps": int,
+    "muon_eps": float,
+    "norm_cap": str,
+    "ortho_update": bool,
     "num_submatrices": int,
-    "orth_beta1": float,
-    "orth_beta2": float,
-    "orth_eps": float,
 }
 
-OPTIONAL_CONFIG_DEFAULTS = {}
+OPTIONAL_CONFIG_DEFAULTS = {
+    "cosine_power": 1.0,
+    "norm_cap": "none",
+}
 
 ORTHOGONAL_TYPE_CHOICES = {"none", "mlp", "atten", "all"}
-ORTHOGONAL_CONFIG_KEYS = {
-    "so_lr",
+NORM_CAP_CHOICES = {"none", "fro", "spectral"}
+MUON_CONFIG_KEYS = {
+    "muon_lr",
+    "muon_min_lr",
+    "muon_momentum",
+    "muon_weight_decay",
+    "muon_nesterov",
+    "muon_ns_steps",
+    "muon_eps",
+    "norm_cap",
+    "ortho_update",
     "num_submatrices",
-    "orth_beta1",
-    "orth_beta2",
-    "orth_eps",
 }
 
 
@@ -111,7 +127,9 @@ def load_config(config_path: str) -> argparse.Namespace:
 
     required_keys = expected_keys - set(OPTIONAL_CONFIG_DEFAULTS)
     if config.get("orthogonal_type") == "none":
-        required_keys = expected_keys - ORTHOGONAL_CONFIG_KEYS
+        required_keys = expected_keys - MUON_CONFIG_KEYS
+    elif config.get("ortho_update") is not True:
+        required_keys = expected_keys - {"num_submatrices"}
     required_keys -= set(OPTIONAL_CONFIG_DEFAULTS)
 
     missing_keys = sorted(required_keys - set(config))
@@ -129,12 +147,16 @@ def load_config(config_path: str) -> argparse.Namespace:
     if coerced_config["orthogonal_type"] not in ORTHOGONAL_TYPE_CHOICES:
         choices = ", ".join(sorted(ORTHOGONAL_TYPE_CHOICES))
         raise ValueError(f"orthogonal_type must be one of: {choices}")
+    coerced_config["norm_cap"] = coerced_config["norm_cap"].lower()
+    if coerced_config["norm_cap"] not in NORM_CAP_CHOICES:
+        choices = ", ".join(sorted(NORM_CAP_CHOICES))
+        raise ValueError(f"norm_cap must be one of: {choices}")
 
     return argparse.Namespace(config=config_path, **coerced_config)
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser("Orthogonal LLaMA-2-style pretraining")
+    parser = argparse.ArgumentParser("Muon LLaMA-2-style pretraining")
     parser.add_argument(
         "--config",
         default=DEFAULT_CONFIG_PATH,
@@ -144,55 +166,33 @@ def parse_args() -> argparse.Namespace:
     return load_config(cli_args.config)
 
 
-def resolve_data_path(data_dir: str, rank: int) -> str:
-    shard_path = os.path.join(data_dir, f"tokens_{rank}.bin")
-    if os.path.exists(shard_path):
-        return shard_path
-
-    fallback_path = os.path.join(data_dir, "tokens_0.bin")
-    if rank == 0 and os.path.exists(fallback_path):
-        return fallback_path
-
-    raise FileNotFoundError(f"Could not find token shard for rank {rank} under {data_dir}")
-
-
-def build_config(args: argparse.Namespace) -> LlamaConfig:
-    return LlamaConfig(
-        vocab_size=args.vocab_size,
-        hidden_size=args.hidden_size,
-        num_layers=args.num_layers,
-        num_heads=args.num_heads,
-        mlp_ratio=args.mlp_ratio,
-        max_position_embeddings=args.max_position_embeddings,
-        rope_theta=args.rope_theta,
-        rms_norm_eps=args.rms_norm_eps,
-        attention_dropout=args.attention_dropout,
-        tie_word_embeddings=args.tie_word_embeddings,
-    )
-
-
-def create_optimizer(args: argparse.Namespace, model: torch.nn.Module) -> torch.optim.Optimizer:
+def create_adamw_optimizer(args: argparse.Namespace, model: torch.nn.Module) -> torch.optim.Optimizer:
     exclude = ["chunk_weights"] if args.orthogonal_type != "none" else []
     param_groups = get_param_groups(model, args.weight_decay, exclude_names=exclude)
     return torch.optim.AdamW(param_groups, lr=args.lr, betas=(0.9, 0.95), eps=1e-8)
 
 
-def load_micro_batch(
-    all_tokens: np.memmap,
-    micro_step: int,
-    batch_size: int,
-    seq_length: int,
-    device: torch.device,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    sample_length = seq_length + 1
-    tokens_per_micro = batch_size * sample_length
-    start = micro_step * tokens_per_micro
-    end = (micro_step + 1) * tokens_per_micro
+def create_muon_optimizer(args: argparse.Namespace, model: torch.nn.Module) -> Muon | MuonOrthogonal | None:
+    if args.orthogonal_type == "none":
+        return None
 
-    token_slice = np.asarray(all_tokens[start:end], dtype=np.int64)
-    token_batch = torch.from_numpy(token_slice.reshape(batch_size, sample_length))
-    token_batch = token_batch.to(device, non_blocking=True)
-    return token_batch[:, :-1], token_batch[:, 1:]
+    optimizer_cls = MuonOrthogonal if args.ortho_update else Muon
+    kwargs = {}
+    if args.ortho_update:
+        kwargs["num_submatrices"] = args.num_submatrices
+        kwargs["norm_cap"] = args.norm_cap
+
+    return optimizer_cls(
+        [model.chunk_weights],
+        lr=args.muon_lr,
+        momentum=args.muon_momentum,
+        weight_decay=args.muon_weight_decay,
+        decay_lr=args.lr,
+        nesterov=args.muon_nesterov,
+        ns_steps=args.muon_ns_steps,
+        eps=args.muon_eps,
+        **kwargs,
+    )
 
 
 def main() -> None:
@@ -235,19 +235,14 @@ def main() -> None:
     if distributed:
         model = DDP(model, device_ids=[local_rank] if device.type == "cuda" else None)
 
-    optimizer = create_optimizer(args, model)
+    optimizer = create_adamw_optimizer(args, model)
     module = model.module if hasattr(model, "module") else model
-    orth_opt = None
-    if args.orthogonal_type != "none":
-        orth_opt = SOOptimizer(
-            module.chunk_weights,
-            lr=args.lr * args.so_lr,
-            betas=(args.orth_beta1, args.orth_beta2),
-            eps=args.orth_eps,
-            num_submatrices=args.num_submatrices,
-        )
+    muon_optimizer = create_muon_optimizer(args, module)
 
     optimizer.zero_grad(set_to_none=True)
+    if muon_optimizer is not None:
+        muon_optimizer.zero_grad(set_to_none=True)
+
     loss_meter = AverageMeter("loss")
     start_time = time.time()
     start_micro_step = 0
@@ -257,9 +252,15 @@ def main() -> None:
 
     for micro_step in range(start_micro_step, total_micro_steps):
         step = micro_step // accum_steps
-        lr = cosine_lr(step, args.num_steps, warmup_steps, args.lr, args.min_lr)
+        lr = cosine_lr(step, args.num_steps, warmup_steps, args.lr, args.min_lr, args.cosine_power)
+        muon_lr = None
         for param_group in optimizer.param_groups:
             param_group["lr"] = lr
+        if muon_optimizer is not None:
+            muon_lr = cosine_lr(step, args.num_steps, warmup_steps, args.muon_lr, args.muon_min_lr, args.cosine_power)
+            for param_group in muon_optimizer.param_groups:
+                param_group["lr"] = muon_lr
+                param_group["decay_lr"] = lr
 
         input_ids, labels = load_micro_batch(all_tokens, micro_step, args.batch_size, args.seq_length, device)
         should_sync = (micro_step + 1) % accum_steps == 0
@@ -293,26 +294,28 @@ def main() -> None:
         if args.clip_grad and args.clip_grad > 0:
             torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip_grad)
 
-        # strict stiefel 50 times in the entire training
-        strict_stiefel_steps = args.num_steps // 50 or 1
-        is_last_step = (step + 1) % strict_stiefel_steps == 0
-
-        if orth_opt is not None:
-            orth_opt.step(lr=lr * args.so_lr, is_last=is_last_step)
-
+        if muon_optimizer is not None:
+            if args.ortho_update:
+                strict_stiefel_steps = args.num_steps // 50 or 1
+                muon_optimizer.step(is_last=(step + 1) % strict_stiefel_steps == 0)
+            else:
+                muon_optimizer.step()
         optimizer.step()
+
+        if muon_optimizer is not None:
+            muon_optimizer.zero_grad(set_to_none=True)
         optimizer.zero_grad(set_to_none=True)
 
         completed_step = step + 1
-        if is_main_process() and (
-            completed_step % args.log_interval == 0 or completed_step == 1 or is_last_step
-        ):
+        if is_main_process() and (completed_step % args.log_interval == 0 or completed_step == 1):
             elapsed = max(time.time() - start_time, 1e-6)
             tokens_seen = completed_step * args.global_batch_size * args.seq_length
             tokens_per_second = tokens_seen / elapsed
+            muon_lr_text = f" MuonLR {muon_lr:.6e}" if muon_lr is not None else ""
             print(
                 f"Step {completed_step:06d}/{args.num_steps:06d} "
-                f"LR {lr:.6e} Loss {loss_meter.avg:.4f} Tokens/s {tokens_per_second:.1f}"
+                f"LR {lr:.6e}{muon_lr_text} Loss {loss_meter.avg:.4f} "
+                f"Tokens/s {tokens_per_second:.1f}"
             )
             loss_meter.reset()
 

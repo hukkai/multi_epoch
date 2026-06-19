@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 
 
-def cosine_lr(step: int, total_steps: int, warmup_steps: int, base_lr: float, min_lr: float) -> float:
+def cosine_lr(step: int, total_steps: int, warmup_steps: int, base_lr: float, min_lr: float, power: float = 1.0) -> float:
     if warmup_steps > 0 and step < warmup_steps:
         return base_lr * float(step + 1) / float(warmup_steps)
     if total_steps <= warmup_steps:
@@ -12,4 +12,5 @@ def cosine_lr(step: int, total_steps: int, warmup_steps: int, base_lr: float, mi
     progress = (step - warmup_steps) / max(1, total_steps - warmup_steps)
     progress = min(max(progress, 0.0), 1.0)
     cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
+    cosine = cosine ** power
     return min_lr + (base_lr - min_lr) * cosine

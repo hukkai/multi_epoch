@@ -67,11 +67,10 @@ class SOOptimizer:
         update = -lr * m_hat / (v_hat.sqrt() + self.eps)
 
         new_x = stiefel_update_taylor(x, update)
-
         if is_last and self.strict_stiefel:
             new_x = polar(new_x)
 
-        new_x = new_x.reshape(-1, self.dim, self.dim)
+        new_x = new_x.reshape(-1, self.dim, self.dim).to(dtype=self.param.dtype)
 
         if dist.is_initialized():
             dist.all_gather_into_tensor(self.param.data, new_x.contiguous())
