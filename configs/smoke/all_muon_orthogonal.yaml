@@ -1,0 +1,40 @@
+data:
+  data_dir: /tmp/ortho_llm_smoke_data
+model:
+  vocab_size: 128
+  hidden_size: 32
+  num_layers: 2
+  num_heads: 4
+  mlp_ratio: 2
+  max_position_embeddings: 32
+  tie_word_embeddings: true
+  parameterization: grouped_matrix
+  enabled_roles:
+  - attn.q
+  - attn.k
+  - attn.v
+  - attn.o
+  - mlp.gate
+  - mlp.up
+  - mlp.down
+  num_kv_heads: 4
+train:
+  output: /tmp/ortho_llm_smoke_all_muon_orth
+  seed: 7
+  log_interval: 1
+  save_freq: 999999999
+  batch_size: 2
+  global_batch_size: 2
+  seq_length: 16
+  num_steps: 5
+  lr: 0.001
+  min_lr: 0.0001
+  weight_decay: 0.0
+  clip_grad: 1.0
+optim:
+  default_role_optimizer: muon_orthogonal
+  muon_lr: 0.001
+  muon_min_lr: 0.0001
+  submat_dim: 4
+checkpoint:
+  enabled: true

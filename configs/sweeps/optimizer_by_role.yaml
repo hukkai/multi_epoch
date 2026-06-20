@@ -1,0 +1,26 @@
+base_config: configs/ablations/grouped_adamw_all_roles.yaml
+output_root: ./output/sweeps/optimizer_by_role
+fixed_overrides:
+  train.num_steps: 3000
+  checkpoint.enabled: false
+axes:
+  optim.default_role_optimizer:
+    - adamw
+    - so
+    - muon
+    - muon_orthogonal
+  model.enabled_roles:
+    - - attn.q
+      - attn.k
+      - attn.v
+      - attn.o
+    - - mlp.gate
+      - mlp.up
+      - mlp.down
+    - - attn.q
+      - attn.k
+      - attn.v
+      - attn.o
+      - mlp.gate
+      - mlp.up
+      - mlp.down
