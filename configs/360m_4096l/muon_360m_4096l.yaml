@@ -22,7 +22,7 @@ train:
   output: ./output/360m_4096l/muon
   log_interval: 10
   save_freq: 999999
-  batch_size: 8
+  batch_size: 4
   global_batch_size: 256
   seq_length: 4096
   num_steps: 13732
