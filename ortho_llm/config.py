@@ -15,7 +15,7 @@ ALL_ROLES = ATTN_ROLES + MLP_ROLES
 ROLE_TO_SAFE_NAME = {role: role.replace(".", "_") for role in ALL_ROLES}
 SAFE_NAME_TO_ROLE = {value: key for key, value in ROLE_TO_SAFE_NAME.items()}
 
-OPTIMIZER_CHOICES = {"adamw", "so", "muon", "muon_orthogonal", "frozen"}
+OPTIMIZER_CHOICES = {"adamw", "orth_adam", "muon", "orth_muon", "frozen"}
 PARAMETERIZATION_CHOICES = {"dense", "grouped_matrix"}
 INIT_CHOICES = {"qr", "gaussian_then_project", "gaussian_no_project"}
 
@@ -71,16 +71,15 @@ class TrainConfig:
 
 @dataclass
 class OptimConfig:
-    dense_optimizer: str = "adamw"
     default_role_optimizer: str = "frozen"
     role_overrides: dict[str, str] = field(default_factory=dict)
     adamw_beta1: float = 0.9
     adamw_beta2: float = 0.95
     adamw_eps: float = 1e-8
-    so_lr: float = 1.0
-    orth_beta1: float = 0.9
-    orth_beta2: float = 0.95
-    orth_eps: float = 1e-8
+    orth_adam_lr: float = 1.0
+    orth_adam_beta1: float = 0.9
+    orth_adam_beta2: float = 0.95
+    orth_adam_eps: float = 1e-8
     submat_dim: int = 64
     strict_stiefel_every: int | str = "num_steps/50"
     muon_lr: float = 2.0e-3
@@ -90,7 +89,6 @@ class OptimConfig:
     muon_nesterov: bool = True
     muon_ns_steps: int = 5
     muon_eps: float = 1e-7
-    norm_cap: str = "none"
 
 
 @dataclass
@@ -249,9 +247,6 @@ def validate_config(config: ExperimentConfig) -> ExperimentConfig:
         if model.row_block_size is not None and model.row_block_size != optim.submat_dim:
             raise ValueError("model.row_block_size is internal and must match optim.submat_dim")
         model.row_block_size = optim.submat_dim
-    if optim.norm_cap.lower() not in {"none", "fro", "spectral"}:
-        raise ValueError("norm_cap must be one of: none, fro, spectral")
-    optim.norm_cap = optim.norm_cap.lower()
     _validate_roles(config)
     return config
 

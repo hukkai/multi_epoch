@@ -10,33 +10,8 @@ from .muon import orthogonalize_newton_schulz
 from .ops import polar
 from .stiefel import stiefel_project, stiefel_update_taylor
 
-NORM_CAP_CHOICES = {"none", "fro", "spectral"}
 
-
-@torch.no_grad()
-def fast_spectral_norm(
-    x: torch.Tensor,
-    n_iter: int = 10,
-    eps: float = 1e-12,
-) -> torch.Tensor:
-    if x.ndim != 3:
-        raise ValueError(f"expected x to have shape (n, rows, cols), got {tuple(x.shape)}")
-
-    n, _, cols = x.shape
-    v = torch.randn(n, cols, 1, device=x.device, dtype=x.dtype)
-    v = v / v.norm(dim=1, keepdim=True).clamp_min(eps)
-
-    for _ in range(n_iter):
-        u = torch.bmm(x, v)
-        u = u / u.norm(dim=1, keepdim=True).clamp_min(eps)
-        v = torch.bmm(x.mT, u)
-        v = v / v.norm(dim=1, keepdim=True).clamp_min(eps)
-
-    sigma = torch.bmm(x, v).norm(dim=1).squeeze(-1)
-    return sigma
-
-
-class MuonOrthogonal(torch.optim.Optimizer):
+class OrthMuon(torch.optim.Optimizer):
     def __init__(
         self,
         params: Any,
@@ -49,9 +24,7 @@ class MuonOrthogonal(torch.optim.Optimizer):
         eps: float = 1e-7,
         submat_dim: int = 64,
         strict_stiefel: bool = True,
-        norm_cap: str = "none",
     ) -> None:
-        norm_cap = norm_cap.lower()
         if lr < 0.0:
             raise ValueError(f"Invalid learning rate: {lr}")
         if decay_lr is not None and decay_lr < 0.0:
@@ -66,9 +39,6 @@ class MuonOrthogonal(torch.optim.Optimizer):
             raise ValueError(f"Invalid eps value: {eps}")
         if submat_dim <= 0:
             raise ValueError(f"Invalid submat_dim value: {submat_dim}")
-        if norm_cap not in NORM_CAP_CHOICES:
-            choices = ", ".join(sorted(NORM_CAP_CHOICES))
-            raise ValueError(f"norm_cap must be one of: {choices}")
 
         defaults = {
             "lr": lr,
@@ -80,7 +50,6 @@ class MuonOrthogonal(torch.optim.Optimizer):
             "eps": eps,
             "submat_dim": submat_dim,
             "strict_stiefel": strict_stiefel,
-            "norm_cap": norm_cap,
         }
         super().__init__(params, defaults)
 
@@ -94,7 +63,7 @@ class MuonOrthogonal(torch.optim.Optimizer):
     def _validate_param(param: torch.Tensor, submat_dim: int) -> tuple[int, int]:
         if param.ndim != 3:
             raise ValueError(
-                "MuonOrthogonal expects parameters with shape (num_matrices, rows, cols), "
+                "OrthMuon expects parameters with shape (num_matrices, rows, cols), "
                 f"got {tuple(param.shape)}"
             )
         rows, cols = param.shape[-2:]
@@ -110,37 +79,11 @@ class MuonOrthogonal(torch.optim.Optimizer):
             return slice(None)
         if param.shape[0] % world_size != 0:
             raise ValueError(
-                "MuonOrthogonal parameter leading dimension "
+                "OrthMuon parameter leading dimension "
                 f"{param.shape[0]} must be divisible by world size {world_size}"
             )
         per_rank = param.shape[0] // world_size
         return slice(rank * per_rank, (rank + 1) * per_rank)
-
-    @staticmethod
-    def _apply_norm_cap(
-        update: torch.Tensor,
-        original_shape: torch.Size,
-        norm_cap: str,
-        eps: float,
-    ) -> torch.Tensor:
-        if norm_cap == "none":
-            return update
-
-        update_full = update.reshape(original_shape)
-        cols = update_full.shape[-1]
-        if norm_cap == "fro":
-            target_norm = math.sqrt(cols)
-            denom = (
-                torch.linalg.norm(update_full, dim=(-2, -1), ord="fro", keepdim=True)
-                .div(target_norm)
-                .clamp_min(eps)
-            )
-        elif norm_cap == "spectral":
-            denom = fast_spectral_norm(update_full).clamp_min(1.0).sqrt().view(-1, 1, 1)
-        else:
-            raise RuntimeError(f"Unexpected norm_cap: {norm_cap}")
-
-        return (update_full / denom).reshape_as(update)
 
     @torch.no_grad()
     def step(self, closure: Any | None = None, is_last: bool = False) -> Any | None:
@@ -163,13 +106,12 @@ class MuonOrthogonal(torch.optim.Optimizer):
             eps = group["eps"]
             submat_dim = group["submat_dim"]
             strict_stiefel = group["strict_stiefel"]
-            norm_cap = group["norm_cap"]
 
             for param in group["params"]:
                 if param.grad is None:
                     continue
                 if param.grad.is_sparse:
-                    raise RuntimeError("MuonOrthogonal does not support sparse gradients")
+                    raise RuntimeError("OrthMuon does not support sparse gradients")
 
                 rows, cols = self._validate_param(param, submat_dim)
                 local_slice = self._local_slice(param, world_size, rank)
@@ -182,7 +124,7 @@ class MuonOrthogonal(torch.optim.Optimizer):
 
                 buffer = state["momentum_buffer"]
                 if buffer.shape != grad.shape:
-                    raise ValueError("MuonOrthogonal momentum buffer shape does not match the local parameter shard")
+                    raise ValueError("OrthMuon momentum buffer shape does not match the local parameter shard")
                 buffer.lerp_(grad, 1.0 - momentum)
 
                 update = torch.lerp(grad, buffer, momentum) if nesterov else buffer
@@ -195,7 +137,6 @@ class MuonOrthogonal(torch.optim.Optimizer):
                 x = param_slice.float().reshape(-1, submat_dim, cols)
                 update = update.reshape_as(x)
                 update = stiefel_project(x, update)
-                update = self._apply_norm_cap(update, grad.shape, norm_cap, eps)
                 update.mul_(-lr * scale)
 
                 new_x = stiefel_update_taylor(x, update, projected=True)

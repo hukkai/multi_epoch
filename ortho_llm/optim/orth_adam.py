@@ -9,7 +9,7 @@ from .ops import polar
 from .stiefel import stiefel_update_taylor
 
 
-class SOOptimizer(torch.optim.Optimizer):
+class OrthAdam(torch.optim.Optimizer):
     def __init__(
         self,
         params: Any,
@@ -42,18 +42,18 @@ class SOOptimizer(torch.optim.Optimizer):
             return slice(None)
         if param.ndim != 3:
             raise ValueError(
-                "distributed SOOptimizer expects shape (num_matrices, rows, cols), "
+                "distributed OrthAdam expects shape (num_matrices, rows, cols), "
                 f"got {tuple(param.shape)}"
             )
         if param.shape[0] % world_size != 0:
-            raise ValueError("SOOptimizer parameter leading dimension must be divisible by world size")
+            raise ValueError("OrthAdam parameter leading dimension must be divisible by world size")
         per_rank = param.shape[0] // world_size
         return slice(rank * per_rank, (rank + 1) * per_rank)
 
     @staticmethod
     def _reshape_stiefel(param_slice: torch.Tensor, submat_dim: int) -> torch.Tensor:
         if param_slice.ndim != 3:
-            raise ValueError(f"SOOptimizer expects shape (chunks, rows, cols), got {tuple(param_slice.shape)}")
+            raise ValueError(f"OrthAdam expects shape (chunks, rows, cols), got {tuple(param_slice.shape)}")
         rows, cols = param_slice.shape[-2:]
         if submat_dim > cols:
             raise ValueError(f"submat_dim {submat_dim} must be <= matrix cols {cols}")

@@ -8,9 +8,9 @@ from ortho_llm.config import ALL_ROLES, ExperimentConfig
 from ortho_llm.modeling.registry import ParameterRegistry, ensure_unique_parameter_ownership
 
 from .muon import Muon
-from .muon_orthogonal import MuonOrthogonal
+from .orth_muon import OrthMuon
 from .param_groups import get_param_groups
-from .so import SOOptimizer
+from .orth_adam import OrthAdam
 
 
 @dataclass
@@ -59,12 +59,12 @@ def resolve_role_owners(config: ExperimentConfig, registry: ParameterRegistry | 
 def _build_role_optimizer(kind: str, params: list[torch.nn.Parameter], config: ExperimentConfig) -> torch.optim.Optimizer:
     optim = config.optim
     train = config.train
-    if kind == "so":
-        return SOOptimizer(
+    if kind == "orth_adam":
+        return OrthAdam(
             params,
-            lr=train.lr * optim.so_lr,
-            betas=(optim.orth_beta1, optim.orth_beta2),
-            eps=optim.orth_eps,
+            lr=train.lr * optim.orth_adam_lr,
+            betas=(optim.orth_adam_beta1, optim.orth_adam_beta2),
+            eps=optim.orth_adam_eps,
             submat_dim=optim.submat_dim,
         )
     if kind == "muon":
@@ -78,8 +78,8 @@ def _build_role_optimizer(kind: str, params: list[torch.nn.Parameter], config: E
             ns_steps=optim.muon_ns_steps,
             eps=optim.muon_eps,
         )
-    if kind == "muon_orthogonal":
-        return MuonOrthogonal(
+    if kind == "orth_muon":
+        return OrthMuon(
             params,
             lr=optim.muon_lr,
             momentum=optim.muon_momentum,
@@ -89,7 +89,6 @@ def _build_role_optimizer(kind: str, params: list[torch.nn.Parameter], config: E
             ns_steps=optim.muon_ns_steps,
             eps=optim.muon_eps,
             submat_dim=optim.submat_dim,
-            norm_cap=optim.norm_cap,
         )
     raise ValueError(f"Unsupported role optimizer kind {kind!r}")
 

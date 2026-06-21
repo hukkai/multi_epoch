@@ -12,7 +12,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "overrides",
         nargs="*",
-        help="Optional dotlist overrides, e.g. train.num_steps=100 optim.default_role_optimizer=so",
+        help="Optional dotlist overrides, e.g. train.num_steps=100 optim.default_role_optimizer=orth_adam",
     )
     return parser.parse_args()
 

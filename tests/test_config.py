@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from ortho_llm.config import ATTN_ROLES, MLP_ROLES, config_from_dict, load_config
+
+
+CONFIG_PATHS = sorted(Path("configs").glob("*/*.yaml"))
 
 
 def test_role_constants_cover_attention_and_mlp() -> None:
@@ -10,7 +15,7 @@ def test_role_constants_cover_attention_and_mlp() -> None:
     assert MLP_ROLES == ("mlp.gate", "mlp.up", "mlp.down")
 
 
-def test_nested_so_config_sets_role_policy() -> None:
+def test_nested_orth_adam_config_sets_role_policy() -> None:
     config = config_from_dict(
         {
             "model": {
@@ -38,8 +43,8 @@ def test_nested_so_config_sets_role_policy() -> None:
                 "num_steps": 5,
             },
             "optim": {
-                "default_role_optimizer": "so",
-                "so_lr": 1.0,
+                "default_role_optimizer": "orth_adam",
+                "orth_adam_lr": 1.0,
                 "submat_dim": 4,
             },
         }
@@ -54,7 +59,7 @@ def test_nested_so_config_sets_role_policy() -> None:
         "mlp.up",
         "mlp.down",
     ]
-    assert config.optim.default_role_optimizer == "so"
+    assert config.optim.default_role_optimizer == "orth_adam"
     assert config.model.row_block_size == 4
 
 
@@ -64,7 +69,7 @@ def test_flat_config_is_rejected() -> None:
 
 
 def test_migrated_repo_config_loads() -> None:
-    config = load_config("configs/ablations/so_all_roles.yaml")
+    config = load_config("configs/360m_2048l/orth_adam_360m_2048l.yaml")
     assert config.model.enabled_roles == [
         "attn.q",
         "attn.k",
@@ -74,4 +79,9 @@ def test_migrated_repo_config_loads() -> None:
         "mlp.up",
         "mlp.down",
     ]
-    assert config.optim.default_role_optimizer == "so"
+    assert config.optim.default_role_optimizer == "orth_adam"
+
+
+@pytest.mark.parametrize("config_path", CONFIG_PATHS, ids=lambda path: str(path))
+def test_repo_configs_load(config_path: Path) -> None:
+    load_config(config_path)

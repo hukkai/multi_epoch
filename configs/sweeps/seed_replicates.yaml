@@ -1,7 +1,0 @@
-base_config: configs/ablations/muon_orthogonal_all_roles.yaml
-output_root: ./output/sweeps/seed_replicates
-axes:
-  train.seed:
-    - 42
-    - 43
-    - 44

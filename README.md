@@ -7,17 +7,17 @@ Small local PyTorch/DDP research codebase for orthogonal-training ablations.
 All training goes through the package entrypoint:
 
 ```bash
-python -m ortho_llm.scripts.train --config configs/smoke/mixed_roles.yaml
+python -m ortho_llm.scripts.train --config configs/360m_2048l/dense_adamw_360m_2048l.yaml
 ```
 
 Multi-process runs use the same entrypoint:
 
 ```bash
-bash run.sh configs/ablations/muon_orthogonal_all_roles.yaml
+bash run.sh configs/360m_2048l/orth_muon_360m_2048l.yaml
 ```
 
-The research configs are organized by ablation question in
-`configs/ablations/`; see `configs/README.md` for the recommended run order.
+The 360M 2x-Chinchilla configs are organized by context length under
+`configs/`; see `RUN.md` for the runnable command list.
 
 ## Config Shape
 
@@ -29,8 +29,8 @@ model:
   enabled_roles: [attn.q, attn.k, attn.v, attn.o, mlp.gate, mlp.up, mlp.down]
 
 optim:
-  default_role_optimizer: so
-  submat_dim: 20
+  default_role_optimizer: orth_adam
+  submat_dim: 32
   role_overrides:
     attn.k: adamw
     attn.v: muon

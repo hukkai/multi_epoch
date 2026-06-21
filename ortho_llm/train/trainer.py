@@ -67,10 +67,10 @@ def _set_optimizer_lrs(bundle: OptimBundle, config: ExperimentConfig, step: int,
             param_group["lr"] = main_lr
 
     for kind, optimizer in bundle.role_optimizers.items():
-        if kind == "so":
+        if kind == "orth_adam":
             for param_group in optimizer.param_groups:
-                param_group["lr"] = main_lr * optim.so_lr
-        elif kind in {"muon", "muon_orthogonal"}:
+                param_group["lr"] = main_lr * optim.orth_adam_lr
+        elif kind in {"muon", "orth_muon"}:
             muon_lr = cosine_lr(
                 step,
                 train.num_steps,
@@ -87,9 +87,9 @@ def _set_optimizer_lrs(bundle: OptimBundle, config: ExperimentConfig, step: int,
 
 def _step_optimizers(bundle: OptimBundle, *, is_strict_step: bool) -> None:
     for kind, optimizer in bundle.role_optimizers.items():
-        if kind == "so":
+        if kind == "orth_adam":
             optimizer.step(is_last=is_strict_step)
-        elif kind == "muon_orthogonal":
+        elif kind == "orth_muon":
             optimizer.step(is_last=is_strict_step)
         else:
             optimizer.step()
@@ -264,7 +264,7 @@ def train(config: ExperimentConfig) -> None:
                 "val_loss": val_metrics["val_loss"],
                 "val_ppl": val_metrics["val_ppl"],
                 "learning_rate_main": main_lr,
-                "learning_rate_chunk": muon_lr if muon_lr is not None else main_lr * config.optim.so_lr,
+                "learning_rate_chunk": muon_lr if muon_lr is not None else main_lr * config.optim.orth_adam_lr,
                 "grad_norm_total": total_grad_norm,
                 "grad_norm_chunk": chunk_grad_norm,
                 "tokens_per_second": tokens_per_second,
