@@ -19,7 +19,6 @@ from ortho_llm.train.checkpoint import load_checkpoint, save_checkpoint
 from ortho_llm.train.distributed import init_distributed, is_main_process
 from ortho_llm.train.evaluator import evaluate
 from ortho_llm.train.logging import JsonlLogger
-from ortho_llm.train.metrics import grad_norm, perplexity, role_orthogonality_metrics
 from ortho_llm.train.misc import AverageMeter, load_rng_state_dict, rng_state_dict, set_seed
 
 
@@ -225,14 +224,10 @@ def train(config: ExperimentConfig) -> None:
         loss_meter.update(local_loss.item(), input_ids.size(0) * accum_steps)
         local_loss.zero_()
 
-        module = model.module if hasattr(model, "module") else model
-        role_params = list(module.role_parameters().values()) if hasattr(module, "role_parameters") else []
-        total_grad_norm = grad_norm(model.parameters())
-        chunk_grad_norm = grad_norm(role_params)
-
         if config.train.clip_grad and config.train.clip_grad > 0:
             torch.nn.utils.clip_grad_norm_(model.parameters(), config.train.clip_grad)
 
+        module = model.module if hasattr(model, "module") else model
         is_strict_step = _strict_stiefel_due(config.optim.strict_stiefel_every, step, config.train.num_steps)
         _step_optimizers(bundle, is_strict_step=is_strict_step)
         bundle.zero_grad(set_to_none=True)
@@ -256,7 +251,6 @@ def train(config: ExperimentConfig) -> None:
             elapsed = max(time.time() - start_time, 1e-6)
             tokens_seen = completed_step * config.train.global_batch_size * config.train.seq_length
             tokens_per_second = tokens_seen / elapsed
-            orth_metrics = role_orthogonality_metrics(module, config.optim.submat_dim)
             row: dict[str, Any] = {
                 "step": completed_step,
                 "tokens_consumed": tokens_seen,
@@ -266,15 +260,12 @@ def train(config: ExperimentConfig) -> None:
                 "val_batches": val_metrics["val_batches"],
                 "learning_rate_main": main_lr,
                 "learning_rate_chunk": muon_lr if muon_lr is not None else main_lr * config.optim.orth_adam_lr,
-                "grad_norm_total": total_grad_norm,
-                "grad_norm_chunk": chunk_grad_norm,
                 "tokens_per_second": tokens_per_second,
                 "wall_time_seconds": elapsed,
                 "peak_cuda_memory_mb": torch.cuda.max_memory_allocated() / 1024 / 1024
                 if torch.cuda.is_available()
                 else None,
                 "nan_or_inf_flag": False,
-                **orth_metrics,
             }
             if logger is not None:
                 logger.write(row)
