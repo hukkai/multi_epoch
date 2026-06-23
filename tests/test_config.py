@@ -7,7 +7,7 @@ import pytest
 from ortho_llm.config import ATTN_ROLES, MLP_ROLES, config_from_dict, load_config
 
 
-CONFIG_PATHS = sorted(Path("configs").glob("*/*.yaml"))
+CONFIG_PATHS = sorted(Path("configs").rglob("*.yaml"))
 
 
 def test_role_constants_cover_attention_and_mlp() -> None:
@@ -69,7 +69,7 @@ def test_flat_config_is_rejected() -> None:
 
 
 def test_migrated_repo_config_loads() -> None:
-    config = load_config("configs/360m_4096l/orth_adam_360m_4096l.yaml")
+    config = load_config("configs/360m_4096l/pilot/orth_adam_360m_4096l.yaml")
     assert config.model.enabled_roles == [
         "attn.q",
         "attn.k",
@@ -80,6 +80,48 @@ def test_migrated_repo_config_loads() -> None:
         "mlp.down",
     ]
     assert config.optim.default_role_optimizer == "orth_adam"
+
+
+def test_config_extends_deep_merges_parent(tmp_path: Path) -> None:
+    parent = tmp_path / "parent.yaml"
+    parent.write_text(
+        """
+model:
+  hidden_size: 32
+  num_layers: 2
+  num_heads: 4
+  mlp_ratio: 2
+  max_position_embeddings: 32
+  vocab_size: 128
+train:
+  batch_size: 2
+  global_batch_size: 2
+  seq_length: 16
+  num_steps: 5
+  lr: 0.001
+  weight_decay: 0.1
+optim:
+  adamw_beta2: 0.95
+""",
+        encoding="utf-8",
+    )
+    child = tmp_path / "child.yaml"
+    child.write_text(
+        """
+extends: parent.yaml
+train:
+  lr: 0.002
+optim:
+  adamw_beta2: 0.98
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(child)
+
+    assert config.train.lr == 0.002
+    assert config.train.weight_decay == 0.1
+    assert config.optim.adamw_beta2 == 0.98
 
 
 @pytest.mark.parametrize("config_path", CONFIG_PATHS, ids=lambda path: str(path))

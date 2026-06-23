@@ -1,0 +1,7 @@
+extends: ../../base/adamw_360m_4096l.yaml
+train:
+  output: ./output/360m_4096l/sweeps/adamw_lr_wd_cosine_power/adamw_lr0p002_wd0p03_cos2
+  lr: 0.002
+  min_lr: 0.0002
+  weight_decay: 0.03
+  cosine_power: 2.0

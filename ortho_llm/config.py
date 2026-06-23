@@ -176,6 +176,53 @@ def _normalize_raw_config(raw: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
+def _deep_merge_config(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    merged = copy.deepcopy(base)
+    for key, value in override.items():
+        if (
+            key in merged
+            and isinstance(merged[key], dict)
+            and isinstance(value, dict)
+        ):
+            merged[key] = _deep_merge_config(merged[key], value)
+        else:
+            merged[key] = copy.deepcopy(value)
+    return merged
+
+
+def _load_raw_config(path: Path, seen: set[Path] | None = None) -> dict[str, Any]:
+    resolved_path = path.resolve()
+    seen = set() if seen is None else seen
+    if resolved_path in seen:
+        chain = " -> ".join(str(item) for item in (*seen, resolved_path))
+        raise ValueError(f"Config extends cycle detected: {chain}")
+    seen.add(resolved_path)
+
+    with resolved_path.open("r", encoding="utf-8") as handle:
+        raw = yaml.safe_load(handle) or {}
+    if not isinstance(raw, dict):
+        raise ValueError("Config must be a YAML mapping")
+
+    parent_refs = raw.pop("extends", None)
+    if parent_refs is None:
+        seen.remove(resolved_path)
+        return raw
+    if isinstance(parent_refs, str):
+        parent_refs = [parent_refs]
+    if not isinstance(parent_refs, list) or not all(isinstance(ref, str) for ref in parent_refs):
+        raise ValueError("Config extends must be a string path or a list of string paths")
+
+    merged: dict[str, Any] = {}
+    for parent_ref in parent_refs:
+        parent_path = Path(parent_ref)
+        if not parent_path.is_absolute():
+            parent_path = resolved_path.parent / parent_path
+        merged = _deep_merge_config(merged, _load_raw_config(parent_path, seen))
+
+    seen.remove(resolved_path)
+    return _deep_merge_config(merged, raw)
+
+
 def _validate_roles(config: ExperimentConfig) -> None:
     model = config.model
     unknown_roles = sorted(set(model.enabled_roles) - set(ALL_ROLES))
@@ -267,8 +314,7 @@ def config_from_dict(raw: dict[str, Any], *, config_path: str | None = None) -> 
 
 def load_config(config_path: str | Path, overrides: list[str] | tuple[str, ...] = ()) -> ExperimentConfig:
     path = Path(config_path)
-    with path.open("r", encoding="utf-8") as handle:
-        raw = yaml.safe_load(handle)
+    raw = _load_raw_config(path)
     raw = apply_overrides(raw, overrides)
     return config_from_dict(raw, config_path=str(path))
 

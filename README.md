@@ -51,6 +51,16 @@ optim:
     attn.v: muon
 ```
 
+Configs can extend another config with a relative path and override only the
+changed fields:
+
+```yaml
+extends: ../base/adamw_360m_4096l.yaml
+train:
+  lr: 0.0012
+  weight_decay: 0.1
+```
+
 Grouped-matrix storage uses:
 
 ```text
