@@ -2,6 +2,21 @@
 
 Small local PyTorch/DDP research codebase for orthogonal-training ablations.
 
+## Data Generation
+
+Generate 8 train shards under `data/C4-50B/`:
+
+```bash
+bash data_gen.sh
+```
+
+Generate 8 validation shards under `data/C4-val-1M/`, with at least
+`1_000_000 / 8` tokens per rank while preserving document boundaries:
+
+```bash
+python data/generate_val_tokens_1m.py --output-dir data/C4-val-1M --overwrite
+```
+
 ## Train
 
 All training goes through the package entrypoint:

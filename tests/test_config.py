@@ -69,7 +69,7 @@ def test_flat_config_is_rejected() -> None:
 
 
 def test_migrated_repo_config_loads() -> None:
-    config = load_config("configs/360m_2048l/orth_adam_360m_2048l.yaml")
+    config = load_config("configs/360m_4096l/orth_adam_360m_4096l.yaml")
     assert config.model.enabled_roles == [
         "attn.q",
         "attn.k",

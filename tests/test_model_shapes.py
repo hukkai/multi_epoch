@@ -4,6 +4,7 @@ import torch
 
 from ortho_llm.config import config_from_dict
 from ortho_llm.modeling import build_model
+from ortho_llm.modeling import chunked_layers
 
 
 def tiny_config(enabled_roles: list[str]):
@@ -74,6 +75,32 @@ def test_grouped_matrix_modes_build_and_store_expected_shapes() -> None:
         output = model(input_ids=input_ids, labels=labels)
         assert output["logits"].shape == (2, 16, config.model.vocab_size)
         assert torch.isfinite(output["loss"])
+
+
+def test_chunk_affine_is_applied_after_layer_slice(monkeypatch) -> None:
+    seen_shapes = []
+
+    def spy_mul_add_broadcast(
+        weight: torch.Tensor,
+        affine1: torch.Tensor,
+        affine2: torch.Tensor,
+    ) -> torch.Tensor:
+        seen_shapes.append((tuple(weight.shape), tuple(affine1.shape), tuple(affine2.shape)))
+        return weight * (affine1 + affine2 + 1.0)
+
+    monkeypatch.setattr(chunked_layers, "mul_add_broadcast", spy_mul_add_broadcast)
+    config = tiny_config(["attn.q", "mlp.up"])
+    model = build_model(config.model)
+
+    attn_weight = model.chunk_bank.attention_weight("attn.q", layer_idx=1)
+    mlp_weight = model.chunk_bank.mlp_weight("mlp.up", layer_idx=0)
+
+    assert tuple(attn_weight.shape) == (32, 32)
+    assert tuple(mlp_weight.shape) == (64, 32)
+    assert seen_shapes == [
+        ((32, 32), (32, 1), (1, 32)),
+        ((64, 32), (64, 1), (1, 32)),
+    ]
 
 
 def test_grouped_matrix_gqa_kv_storage_is_rectangular() -> None:

@@ -82,16 +82,13 @@ class CausalSelfAttention(nn.Module):
         k = self.k_proj(x).view(batch_size, seq_len, self.num_kv_heads, self.head_dim).transpose(1, 2)
         v = self.v_proj(x).view(batch_size, seq_len, self.num_kv_heads, self.head_dim).transpose(1, 2)
         q, k = apply_rotary_pos_emb(q, k, cos, sin)
-        if self.num_kv_heads != self.num_heads:
-            repeat_factor = self.num_heads // self.num_kv_heads
-            k = k.repeat_interleave(repeat_factor, dim=1)
-            v = v.repeat_interleave(repeat_factor, dim=1)
         attn_output = F.scaled_dot_product_attention(
             q,
             k,
             v,
             dropout_p=self.attention_dropout if self.training else 0.0,
             is_causal=True,
+            enable_gqa=self.num_kv_heads != self.num_heads,
         )
         attn_output = attn_output.transpose(1, 2).contiguous().view(batch_size, seq_len, self.hidden_size)
         return self.o_proj(attn_output)

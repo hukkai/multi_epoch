@@ -38,7 +38,8 @@ def test_help_does_not_require_huggingface_dependencies() -> None:
         capture_output=True,
         text=True,
     )
-    assert "--val-output-dir" in result.stdout
+    assert "--output-dir" in result.stdout
+    assert "--val-output-dir" not in result.stdout
 
 
 def test_parse_args_keeps_train_only_cli_compatible(tmp_path: Path) -> None:
@@ -53,8 +54,8 @@ def test_parse_args_keeps_train_only_cli_compatible(tmp_path: Path) -> None:
         ]
     )
     assert args.split == "train"
-    assert args.val_split == "validation"
-    assert args.val_output_dir is None
+    assert not hasattr(args, "val_split")
+    assert not hasattr(args, "val_output_dir")
 
 
 def test_validate_args_rejects_invalid_shard_rank(tmp_path: Path) -> None:
@@ -97,10 +98,9 @@ def test_write_token_shard_streams_tokens_with_eos(tmp_path: Path) -> None:
     assert read_tokens(result.path) == [1, 2, 99, 3, 99]
 
 
-def test_train_and_validation_shards_use_same_rank_mapping(tmp_path: Path) -> None:
+def test_shards_use_rank_stride_mapping(tmp_path: Path) -> None:
     train_dir = tmp_path / "train"
-    val_dir = tmp_path / "val"
-    tokenizer = FakeTokenizer({"a": [1], "b": [2], "c": [3], "d": [4], "x": [11], "y": [12], "z": [13]})
+    tokenizer = FakeTokenizer({"a": [1], "b": [2], "c": [3], "d": [4]})
 
     prepare_tokens.write_token_shard(
         [{"text": "a"}, {"text": "b"}, {"text": "c"}, {"text": "d"}],
@@ -112,19 +112,7 @@ def test_train_and_validation_shards_use_same_rank_mapping(tmp_path: Path) -> No
         split="train",
         show_progress=False,
     )
-    prepare_tokens.write_token_shard(
-        [{"text": "x"}, {"text": "y"}, {"text": "z"}],
-        tokenizer,
-        output_dir=val_dir,
-        text_column="text",
-        shard_rank=1,
-        num_shards=2,
-        split="validation",
-        show_progress=False,
-    )
-
     assert read_tokens(train_dir / "tokens_1.bin") == [2, 99, 4, 99]
-    assert read_tokens(val_dir / "tokens_1.bin") == [12, 99]
 
 
 def test_write_token_shard_rejects_missing_text_column(tmp_path: Path) -> None:

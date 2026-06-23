@@ -41,15 +41,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--dataset-name", type=str, required=True)
     parser.add_argument("--dataset-config", type=str, default=None)
     parser.add_argument("--split", type=str, default="train")
-    parser.add_argument("--val-split", type=str, default="validation")
     parser.add_argument("--text-column", type=str, default="text")
     parser.add_argument("--shard-rank", type=int, default=0)
     parser.add_argument("--num-shards", type=int, default=1)
     parser.add_argument("--num-documents", type=int, default=0, help="0 means use the full train split")
-    parser.add_argument("--val-num-documents", type=int, default=0, help="0 means use the full validation split")
     parser.add_argument("--num-workers", type=int, default=8)
     parser.add_argument("--output-dir", type=str, required=True)
-    parser.add_argument("--val-output-dir", type=str, default=None)
     return parser.parse_args(argv)
 
 
@@ -59,8 +56,6 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--num-workers must be positive")
     if args.num_documents < 0:
         raise ValueError("--num-documents must be non-negative")
-    if args.val_num_documents < 0:
-        raise ValueError("--val-num-documents must be non-negative")
 
 
 def validate_shard_settings(shard_rank: int, num_shards: int, *, cli: bool = False) -> None:
@@ -308,38 +303,19 @@ def main() -> None:
     args = parse_args()
     validate_args(args)
 
-    results = [
-        write_hf_token_shard(
-            tokenizer_name=args.tokenizer,
-            dataset_name=args.dataset_name,
-            dataset_config=args.dataset_config,
-            split=args.split,
-            output_dir=args.output_dir,
-            text_column=args.text_column,
-            shard_rank=args.shard_rank,
-            num_shards=args.num_shards,
-            num_documents=args.num_documents,
-            num_workers=args.num_workers,
-        )
-    ]
-    if args.val_output_dir:
-        results.append(
-            write_hf_token_shard(
-                tokenizer_name=args.tokenizer,
-                dataset_name=args.dataset_name,
-                dataset_config=args.dataset_config,
-                split=args.val_split,
-                output_dir=args.val_output_dir,
-                text_column=args.text_column,
-                shard_rank=args.shard_rank,
-                num_shards=args.num_shards,
-                num_documents=args.val_num_documents,
-                num_workers=args.num_workers,
-            )
-        )
-
-    for result in results:
-        print(f"Wrote {result.tokens} {result.split} tokens from {result.documents} documents to {result.path}")
+    result = write_hf_token_shard(
+        tokenizer_name=args.tokenizer,
+        dataset_name=args.dataset_name,
+        dataset_config=args.dataset_config,
+        split=args.split,
+        output_dir=args.output_dir,
+        text_column=args.text_column,
+        shard_rank=args.shard_rank,
+        num_shards=args.num_shards,
+        num_documents=args.num_documents,
+        num_workers=args.num_workers,
+    )
+    print(f"Wrote {result.tokens} {result.split} tokens from {result.documents} documents to {result.path}")
 
 
 if __name__ == "__main__":

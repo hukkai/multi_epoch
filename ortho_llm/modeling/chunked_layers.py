@@ -20,6 +20,27 @@ from ortho_llm.modeling.llama import (
 from ortho_llm.modeling.registry import MatrixSpec, ParameterRegistry
 
 
+def _compile_chunk_affine_enabled() -> bool:
+    return True
+
+
+def mul_add_broadcast_eager(
+    orth_weight: torch.Tensor,
+    affine1: torch.Tensor,
+    affine2: torch.Tensor,
+) -> torch.Tensor:
+    return orth_weight * (affine1 + affine2 + 1.0)
+
+
+if _compile_chunk_affine_enabled() and hasattr(torch, "compile"):
+    mul_add_broadcast = torch.compile(
+        mul_add_broadcast_eager,
+        fullgraph=True,
+    )
+else:
+    mul_add_broadcast = mul_add_broadcast_eager
+
+
 def _stiefel_block_init_3d(param: nn.Parameter, submat_dim: int) -> None:
     with torch.no_grad():
         work = param.data.to(torch.float32)
@@ -78,18 +99,22 @@ class RoleChunkBank(nn.Module):
             return self.intermediate_size
         raise ValueError(f"Unsupported role {role!r}")
 
-    def _role_tensor(self, role: str) -> torch.Tensor:
+    def _role_weight(self, role: str, layer_idx: int) -> torch.Tensor:
         safe_name = ROLE_TO_SAFE_NAME[role]
-        weight = self.weights[safe_name]
+        weight = self.weights[safe_name][layer_idx]
         if not self.config.chunk_affine:
             return weight
-        return weight * (self.affine1[safe_name] + self.affine2[safe_name] + 1.0)
+        return mul_add_broadcast(
+            weight,
+            self.affine1[safe_name][layer_idx],
+            self.affine2[safe_name][layer_idx],
+        )
 
     def attention_weight(self, role: str, layer_idx: int) -> torch.Tensor:
-        return self._role_tensor(role)[layer_idx]
+        return self._role_weight(role, layer_idx)
 
     def mlp_weight(self, role: str, layer_idx: int) -> torch.Tensor:
-        return self._role_tensor(role)[layer_idx]
+        return self._role_weight(role, layer_idx)
 
     def role_parameters(self) -> dict[str, nn.Parameter]:
         return {role: self.weights[ROLE_TO_SAFE_NAME[role]] for role in self.enabled_roles}
@@ -172,21 +197,16 @@ class HybridAttention(nn.Module):
         v = v.view(batch_size, seq_len, self.num_kv_heads, self.head_dim).transpose(1, 2)
 
         q, k = apply_rotary_pos_emb(q, k, cos, sin)
-        if self.num_kv_heads != self.num_heads:
-            repeat_factor = self.num_heads // self.num_kv_heads
-            k = k.repeat_interleave(repeat_factor, dim=1)
-            v = v.repeat_interleave(repeat_factor, dim=1)
         attn_output = F.scaled_dot_product_attention(
             q,
             k,
             v,
             dropout_p=self.attention_dropout if self.training else 0.0,
             is_causal=True,
+            enable_gqa=self.num_kv_heads != self.num_heads,
         )
         attn_output = attn_output.transpose(1, 2).contiguous().view(batch_size, seq_len, self.hidden_size)
-        if "attn.o" in self.enabled_roles:
-            return F.linear(attn_output, bank.attention_weight("attn.o", layer_idx))
-        return self.dense.o_proj(attn_output)
+        return self._linear(attn_output, "attn.o", "o_proj", bank, layer_idx)
 
 
 class HybridMLP(nn.Module):

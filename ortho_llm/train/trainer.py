@@ -238,7 +238,7 @@ def train(config: ExperimentConfig) -> None:
         bundle.zero_grad(set_to_none=True)
 
         completed_step = step + 1
-        val_metrics: dict[str, float | None] = {"val_loss": None, "val_ppl": None}
+        val_metrics: dict[str, float | int | None] = {"val_loss": None, "val_ppl": None, "val_batches": 0}
         if (
             val_dataset is not None
             and config.train.eval_interval > 0
@@ -263,6 +263,7 @@ def train(config: ExperimentConfig) -> None:
                 "train_loss": loss_meter.avg,
                 "val_loss": val_metrics["val_loss"],
                 "val_ppl": val_metrics["val_ppl"],
+                "val_batches": val_metrics["val_batches"],
                 "learning_rate_main": main_lr,
                 "learning_rate_chunk": muon_lr if muon_lr is not None else main_lr * config.optim.orth_adam_lr,
                 "grad_norm_total": total_grad_norm,

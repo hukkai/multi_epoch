@@ -27,6 +27,10 @@ def _screen_dtype(dtype: torch.dtype) -> torch.dtype:
     return dtype
 
 
+def _compile_stiefel_enabled() -> bool:
+    return True
+
+
 def _validate_shape(a: torch.Tensor) -> None:
     if a.ndim != 3:
         raise ValueError(f"expected a to have shape (b, n, m), got {tuple(a.shape)}")
@@ -54,6 +58,19 @@ def _apply_series(
     return q
 
 
+def _apply_series2_eager(a: torch.Tensor, gram_error: torch.Tensor) -> torch.Tensor:
+    term = gram_error @ a
+    q = a + _COEFFS2[0] * term
+    term = gram_error @ term
+    return q + _COEFFS2[1] * term
+
+
+if _compile_stiefel_enabled() and hasattr(torch, "compile"):
+    _apply_series2 = torch.compile(_apply_series2_eager, fullgraph=True)
+else:
+    _apply_series2 = _apply_series2_eager
+
+
 @torch.no_grad()
 def fast_polar(
     a: torch.Tensor,
@@ -72,7 +89,7 @@ def fast_polar(
     if max_err <= tolerance:
         return a
     if max_err < taylor2_max_err:
-        return _apply_series(work, gram_error, _COEFFS2).to(a.dtype)
+        return _apply_series2(work, gram_error).to(a.dtype)
     if max_err < taylor3_max_err:
         return _apply_series(work, gram_error, _COEFFS3).to(a.dtype)
     if max_err < taylor4_max_err:
