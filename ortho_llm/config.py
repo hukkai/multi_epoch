@@ -18,6 +18,7 @@ SAFE_NAME_TO_ROLE = {value: key for key, value in ROLE_TO_SAFE_NAME.items()}
 OPTIMIZER_CHOICES = {"adamw", "orth_adam", "muon", "orth_muon", "frozen"}
 PARAMETERIZATION_CHOICES = {"dense", "grouped_matrix"}
 INIT_CHOICES = {"qr", "gaussian_then_project", "gaussian_no_project"}
+ORTH_MUON_UPDATE_METHODS = {"flow", "polar", "skew"}
 
 
 @dataclass
@@ -89,6 +90,7 @@ class OptimConfig:
     muon_nesterov: bool = True
     muon_ns_steps: int = 5
     muon_eps: float = 1e-7
+    orth_muon_update_method: str = "polar"
 
 
 @dataclass
@@ -278,6 +280,9 @@ def validate_config(config: ExperimentConfig) -> ExperimentConfig:
         raise ValueError("seq_length must be <= max_position_embeddings")
     if optim.submat_dim <= 0:
         raise ValueError("submat_dim must be positive")
+    if optim.orth_muon_update_method not in ORTH_MUON_UPDATE_METHODS:
+        choices = ", ".join(sorted(ORTH_MUON_UPDATE_METHODS))
+        raise ValueError(f"orth_muon_update_method must be one of: {choices}")
     kv_heads = model.num_kv_heads or model.num_heads
     kv_dim = kv_heads * head_dim
     intermediate_size = model.hidden_size * model.mlp_ratio

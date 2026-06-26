@@ -59,12 +59,6 @@ def skew_update_taylor(
 ) -> torch.Tensor:
     """
     Fixed-order version of the exp-based fused update.
-
-    This removes the adaptive generator norm branch and therefore avoids
-    per-step GPU -> CPU synchronization from .item().
-
-    It keeps the general transition construction, so it does not assume
-    x @ x.T == I exactly.
     """
     if x.ndim != 3 or delta.ndim != 3:
         raise ValueError(

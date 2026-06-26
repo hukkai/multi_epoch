@@ -68,6 +68,35 @@ def test_flat_config_is_rejected() -> None:
         config_from_dict({"data_dir": "./data", "enabled_roles": []})
 
 
+def test_invalid_orth_muon_update_method_is_rejected() -> None:
+    with pytest.raises(ValueError, match="orth_muon_update_method"):
+        config_from_dict(
+            {
+                "model": {
+                    "hidden_size": 32,
+                    "num_layers": 2,
+                    "num_heads": 4,
+                    "mlp_ratio": 2,
+                    "max_position_embeddings": 32,
+                    "vocab_size": 128,
+                    "parameterization": "grouped_matrix",
+                    "enabled_roles": ["attn.q"],
+                },
+                "train": {
+                    "batch_size": 2,
+                    "global_batch_size": 2,
+                    "seq_length": 16,
+                    "num_steps": 5,
+                },
+                "optim": {
+                    "default_role_optimizer": "orth_muon",
+                    "submat_dim": 4,
+                    "orth_muon_update_method": "projected_flow",
+                },
+            }
+        )
+
+
 def test_migrated_repo_config_loads() -> None:
     config = load_config("configs/360m_4096l/pilot/orth_adam_360m_4096l.yaml")
     assert config.model.enabled_roles == [
