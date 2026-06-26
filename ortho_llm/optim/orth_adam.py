@@ -6,7 +6,7 @@ import torch
 import torch.distributed as dist
 
 from .ops import polar
-from .stiefel import stiefel_update_taylor
+from .stiefel_update import stiefel_update_taylor
 
 
 class OrthAdam(torch.optim.Optimizer):

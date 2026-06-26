@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import math
 from typing import Any
+import warnings
 
 import torch
 import torch.distributed as dist
 
 from .muon import orthogonalize_newton_schulz
 from .ops import polar
-from .stiefel import stiefel_project, stiefel_update_taylor
+from .stiefel_update import stiefel_update_taylor
 
 
 class OrthMuon(torch.optim.Optimizer):
@@ -31,8 +32,7 @@ class OrthMuon(torch.optim.Optimizer):
             raise ValueError(f"Invalid decay learning rate: {decay_lr}")
         if momentum < 0.0:
             raise ValueError(f"Invalid momentum value: {momentum}")
-        if weight_decay < 0.0:
-            raise ValueError(f"Invalid weight_decay value: {weight_decay}")
+
         if ns_steps < 0:
             raise ValueError(f"Invalid ns_steps value: {ns_steps}")
         if eps < 0.0:
@@ -40,10 +40,16 @@ class OrthMuon(torch.optim.Optimizer):
         if submat_dim <= 0:
             raise ValueError(f"Invalid submat_dim value: {submat_dim}")
 
+        if weight_decay != 0.0:
+            warnings.warn(
+                "OrthMuon does not support weight decay for orthogonal parameters. "
+                "The weight_decay value will be ignored."
+            )
+            weight_decay = 0.0
+
         defaults = {
             "lr": lr,
             "momentum": momentum,
-            "weight_decay": weight_decay,
             "decay_lr": decay_lr,
             "nesterov": nesterov,
             "ns_steps": ns_steps,
@@ -100,7 +106,6 @@ class OrthMuon(torch.optim.Optimizer):
             if decay_lr is None:
                 decay_lr = lr
             momentum = group["momentum"]
-            weight_decay = group["weight_decay"]
             nesterov = group["nesterov"]
             ns_steps = group["ns_steps"]
             eps = group["eps"]
@@ -131,15 +136,12 @@ class OrthMuon(torch.optim.Optimizer):
                 update = orthogonalize_newton_schulz(update, steps=ns_steps, eps=eps)
 
                 scale = 0.2 * math.sqrt(max(rows, cols))
-                if weight_decay != 0.0:
-                    param_slice.mul_(1.0 - decay_lr * weight_decay)
 
                 x = param_slice.float().reshape(-1, submat_dim, cols)
                 update = update.reshape_as(x)
-                update = stiefel_project(x, update)
                 update.mul_(-lr * scale)
 
-                new_x = stiefel_update_taylor(x, update, projected=True)
+                new_x = stiefel_update_taylor(x, update)
                 if is_last and strict_stiefel:
                     new_x = polar(new_x)
 
