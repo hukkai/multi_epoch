@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import math
 from typing import Any
-import warnings
 
 import torch
 import torch.distributed as dist
@@ -18,18 +17,16 @@ class OrthMuon(torch.optim.Optimizer):
         params: Any,
         lr: float = 1e-3,
         momentum: float = 0.95,
-        weight_decay: float = 0.0,
-        decay_lr: float | None = None,
         nesterov: bool = True,
         ns_steps: int = 5,
         eps: float = 1e-7,
         submat_dim: int = 64,
         strict_stiefel: bool = True,
     ) -> None:
+        if isinstance(params, torch.nn.Parameter):
+            params = [params]
         if lr < 0.0:
             raise ValueError(f"Invalid learning rate: {lr}")
-        if decay_lr is not None and decay_lr < 0.0:
-            raise ValueError(f"Invalid decay learning rate: {decay_lr}")
         if momentum < 0.0:
             raise ValueError(f"Invalid momentum value: {momentum}")
 
@@ -40,17 +37,9 @@ class OrthMuon(torch.optim.Optimizer):
         if submat_dim <= 0:
             raise ValueError(f"Invalid submat_dim value: {submat_dim}")
 
-        if weight_decay != 0.0:
-            warnings.warn(
-                "OrthMuon does not support weight decay for orthogonal parameters. "
-                "The weight_decay value will be ignored."
-            )
-            weight_decay = 0.0
-
         defaults = {
             "lr": lr,
             "momentum": momentum,
-            "decay_lr": decay_lr,
             "nesterov": nesterov,
             "ns_steps": ns_steps,
             "eps": eps,
@@ -102,9 +91,6 @@ class OrthMuon(torch.optim.Optimizer):
 
         for group in self.param_groups:
             lr = group["lr"]
-            decay_lr = group["decay_lr"]
-            if decay_lr is None:
-                decay_lr = lr
             momentum = group["momentum"]
             nesterov = group["nesterov"]
             ns_steps = group["ns_steps"]

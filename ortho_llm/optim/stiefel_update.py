@@ -50,19 +50,17 @@ def _apply_series(
     gram_error: torch.Tensor,
     coeffs: tuple[float, ...],
 ) -> torch.Tensor:
-    term = gram_error @ a
-    q = a + coeffs[0] * term
-    for coeff in coeffs[1:]:
-        term = gram_error @ term
-        q = q + coeff * term
-    return q
+    ident = torch.eye(gram_error.shape[-1], device=gram_error.device, dtype=gram_error.dtype)
+    poly = coeffs[-1] * gram_error
+    for coeff in reversed(coeffs[:-1]):
+        poly = (poly + coeff * ident) @ gram_error
+    return a + poly @ a
 
 
 def _apply_series2_eager(a: torch.Tensor, gram_error: torch.Tensor) -> torch.Tensor:
-    term = gram_error @ a
-    q = a + _COEFFS2[0] * term
-    term = gram_error @ term
-    return q + _COEFFS2[1] * term
+    ident = torch.eye(gram_error.shape[-1], device=gram_error.device, dtype=gram_error.dtype)
+    poly = (_COEFFS2[1] * gram_error + _COEFFS2[0] * ident) @ gram_error
+    return a + poly @ a
 
 
 if _compile_stiefel_enabled() and hasattr(torch, "compile"):

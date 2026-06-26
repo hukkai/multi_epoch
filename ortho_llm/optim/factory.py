@@ -83,8 +83,6 @@ def _build_role_optimizer(kind: str, params: list[torch.nn.Parameter], config: E
             params,
             lr=optim.muon_lr,
             momentum=optim.muon_momentum,
-            weight_decay=optim.muon_weight_decay,
-            decay_lr=train.lr,
             nesterov=optim.muon_nesterov,
             ns_steps=optim.muon_ns_steps,
             eps=optim.muon_eps,

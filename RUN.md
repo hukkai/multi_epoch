@@ -84,4 +84,5 @@ omitted because matching pilot runs already exist:
 
 Select the top 5 AdamW and top 5 Muon configs by validation loss. Orth
 follow-up configs should extend those selected configs, inherit the base lr
-setting, and use `train.cosine_power: 2.0` as the fixed Orth recipe.
+setting, set `optim.muon_weight_decay: 0.0` for OrthMuon, and use
+`train.cosine_power: 2.0` as the fixed Orth recipe.

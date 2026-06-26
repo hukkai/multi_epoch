@@ -80,7 +80,8 @@ def _set_optimizer_lrs(bundle: OptimBundle, config: ExperimentConfig, step: int,
             )
             for param_group in optimizer.param_groups:
                 param_group["lr"] = muon_lr
-                param_group["decay_lr"] = main_lr
+                if kind == "muon":
+                    param_group["decay_lr"] = main_lr
     return main_lr, muon_lr
 
 
