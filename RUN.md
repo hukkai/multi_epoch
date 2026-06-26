@@ -86,3 +86,10 @@ Select the top 5 AdamW and top 5 Muon configs by validation loss. Orth
 follow-up configs should extend those selected configs, inherit the base lr
 setting, set `optim.muon_weight_decay: 0.0` for OrthMuon, and use
 `train.cosine_power: 2.0` as the fixed Orth recipe.
+
+## OrthMuon Update Method Follow-Ups
+
+```bash
+bash run.sh configs/360m_4096l/pilot/orth_muon_flow_360m_4096l_lrcos2.yaml
+bash run.sh configs/360m_4096l/pilot/orth_muon_skew_360m_4096l_lrcos2.yaml
+```
