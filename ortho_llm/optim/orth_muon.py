@@ -13,7 +13,7 @@ from .skew_update import skew_update_taylor
 from .stiefel_update import stiefel_update_taylor
 
 
-ORTH_MUON_UPDATE_METHODS = frozenset({"polar", "flow", "skew"})
+ORTH_MUON_UPDATE_METHODS = frozenset({"polar", "flow", "skew", "raw"})
 
 
 class OrthMuon(torch.optim.Optimizer):
@@ -27,7 +27,7 @@ class OrthMuon(torch.optim.Optimizer):
         eps: float = 1e-7,
         submat_dim: int = 64,
         strict_stiefel: bool = True,
-        update_method: str = "polar",  # Options: "polar", "flow", "skew"
+        update_method: str = "polar",  # Options: "polar", "flow", "skew", "raw"
     ) -> None:
         if isinstance(params, torch.nn.Parameter):
             params = [params]
@@ -141,6 +141,9 @@ class OrthMuon(torch.optim.Optimizer):
                 if update_method == "polar":
                     update.mul_(-eta)
                     new_x = stiefel_update_taylor(x, update)
+                elif update_method == "raw":
+                    update.mul_(-eta)
+                    new_x = stiefel_update_taylor(x, update, do_projection=False)
                 elif update_method == "flow":
                     new_x = flow_update(x, update, eta=-eta)
                 elif update_method == "skew":

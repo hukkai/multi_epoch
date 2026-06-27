@@ -99,6 +99,39 @@ def test_optimizer_factory_assigns_mixed_role_owners_once() -> None:
     assert "decay_lr" not in orth_muon_group
 
 
+def test_optimizer_factory_accepts_raw_orth_muon_update() -> None:
+    config = config_from_dict(
+        {
+            "model": {
+                "vocab_size": 128,
+                "hidden_size": 32,
+                "num_layers": 2,
+                "num_heads": 4,
+                "mlp_ratio": 2,
+                "max_position_embeddings": 32,
+                "parameterization": "grouped_matrix",
+                "enabled_roles": ["mlp.up"],
+            },
+            "train": {
+                "batch_size": 2,
+                "global_batch_size": 2,
+                "seq_length": 16,
+                "num_steps": 2,
+            },
+            "optim": {
+                "default_role_optimizer": "orth_muon",
+                "submat_dim": 4,
+                "orth_muon_update_method": "raw",
+            },
+        }
+    )
+    model = build_model(config.model)
+    bundle = build_optimizers(config, model)
+
+    orth_muon_group = bundle.role_optimizers["orth_muon"].param_groups[0]
+    assert orth_muon_group["update_method"] == "raw"
+
+
 def test_orth_adam_preserves_square_and_rectangular_shapes() -> None:
     for shape in ((4, 8, 8), (4, 4, 16)):
         param = torch.nn.Parameter(torch.randn(*shape))

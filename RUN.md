@@ -92,4 +92,5 @@ setting, set `optim.muon_weight_decay: 0.0` for OrthMuon, and use
 ```bash
 bash run.sh configs/360m_4096l/pilot/orth_muon_flow_360m_4096l_lrcos2.yaml
 bash run.sh configs/360m_4096l/pilot/orth_muon_skew_360m_4096l_lrcos2.yaml
+bash run.sh configs/360m_4096l/pilot/orth_muon_raw_360m_4096l_lrcos2.yaml
 ```

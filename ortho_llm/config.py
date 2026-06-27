@@ -18,7 +18,7 @@ SAFE_NAME_TO_ROLE = {value: key for key, value in ROLE_TO_SAFE_NAME.items()}
 OPTIMIZER_CHOICES = {"adamw", "orth_adam", "muon", "orth_muon", "frozen"}
 PARAMETERIZATION_CHOICES = {"dense", "grouped_matrix"}
 INIT_CHOICES = {"qr", "gaussian_then_project", "gaussian_no_project"}
-ORTH_MUON_UPDATE_METHODS = {"flow", "polar", "skew"}
+ORTH_MUON_UPDATE_METHODS = {"flow", "polar", "skew", "raw"}
 
 
 @dataclass

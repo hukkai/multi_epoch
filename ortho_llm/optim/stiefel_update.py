@@ -103,9 +103,9 @@ def stiefel_update_taylor(
     taylor2_max_err: float = TAYLOR2_MAX_ERR,
     taylor3_max_err: float = TAYLOR3_MAX_ERR,
     taylor4_max_err: float = TAYLOR4_MAX_ERR,
-    projected: bool = False,
+    do_projection: bool = True,
 ) -> torch.Tensor:
-    if not projected:
+    if do_projection:
         update = stiefel_project(x, update)
     return fast_polar(
         x + update,
