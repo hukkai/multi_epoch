@@ -68,7 +68,7 @@ def test_flat_config_is_rejected() -> None:
         config_from_dict({"data_dir": "./data", "enabled_roles": []})
 
 
-def test_invalid_orth_muon_update_method_is_rejected() -> None:
+def test_legacy_orth_muon_update_method_key_is_rejected() -> None:
     with pytest.raises(ValueError, match="orth_muon_update_method"):
         config_from_dict(
             {
@@ -91,7 +91,7 @@ def test_invalid_orth_muon_update_method_is_rejected() -> None:
                 "optim": {
                     "default_role_optimizer": "orth_muon",
                     "submat_dim": 4,
-                    "orth_muon_update_method": "projected_flow",
+                    "orth_muon_update_method": "flow",
                 },
             }
         )

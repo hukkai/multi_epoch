@@ -29,7 +29,6 @@ train:
   num_steps: 13732
   lr: 0.0012
   min_lr: 0.00012
-  weight_decay: 0.1
   clip_grad: 1.0
   cosine_power: 2
   eval_interval: 274

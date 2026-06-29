@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import torch
 
-from .stiefel_update import fast_polar
+from ..stiefel_update import fast_polar
 
 
 def _symmetrize(matrix: torch.Tensor) -> torch.Tensor:
