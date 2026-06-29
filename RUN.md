@@ -72,25 +72,48 @@ bash run.sh configs/360m_4096l/sweeps/muon_lr_wd_cosine_power/muon_lr0p004_wd0p3
 bash run.sh configs/360m_4096l/sweeps/muon_lr_wd_cosine_power/muon_lr0p004_wd0p3_cos2.yaml
 ```
 
+## Added Experiments for the Sweep
+
+Run these 5 targeted follow-up experiments:
+
+```bash
+bash run.sh configs/360m_4096l/sweeps/adamw_lr_wd_cosine_power/adamw_lr0p0012_wd0p6_cos1.yaml
+bash run.sh configs/360m_4096l/sweeps/adamw_lr_wd_cosine_power/adamw_lr0p0006_wd0p6_cos1.yaml
+bash run.sh configs/360m_4096l/sweeps/muon_lr_wd_cosine_power/muon_lr0p008_wd0p3_cos1.yaml
+bash run.sh configs/360m_4096l/sweeps/muon_lr_wd_cosine_power/muon_lr0p004_wd0p5_cos1.yaml
+bash run.sh configs/360m_4096l/sweeps/muon_lr_wd_cosine_power/muon_lr0p008_wd0p6_cos1.yaml
+```
+
 ## After The Sweep
 
-This run list has 50 experiments instead of the full 54-grid. Four settings are
-omitted because matching pilot runs already exist:
+The base sweep run list has 50 experiments instead of the full 54-grid. Four
+settings are omitted because matching pilot runs already exist:
 
 - AdamW `lr=0.0012, weight_decay=0.1, cosine_power=1.0`
 - AdamW `lr=0.0012, weight_decay=0.1, cosine_power=2.0`
 - Muon `muon_lr=0.002, muon_weight_decay=0.1, cosine_power=1.0`
 - Muon `muon_lr=0.002, muon_weight_decay=0.1, cosine_power=2.0`
 
-Select the top 5 AdamW and top 5 Muon configs by validation loss. Orth
-follow-up configs should extend those selected configs, inherit the base lr
-setting, set `optim.muon_weight_decay: 0.0` for OrthMuon, and use
-`train.cosine_power: 2.0` as the fixed Orth recipe.
+With the five added experiments above, the AdamW/Muon sweep sections list 55 run
+commands before the OrthAdam/OrthMuon LR sweeps below.
 
-## OrthMuon Update Method Follow-Ups
+## OrthAdam LR Sweep
+
+Run these 3 OrthAdam experiments with `train.cosine_power: 2`:
 
 ```bash
-bash run.sh configs/360m_4096l/pilot/orth_muon_flow_360m_4096l_lrcos2.yaml
-bash run.sh configs/360m_4096l/pilot/orth_muon_skew_360m_4096l_lrcos2.yaml
-bash run.sh configs/360m_4096l/pilot/orth_muon_raw_360m_4096l_lrcos2.yaml
+bash run.sh configs/360m_4096l/sweeps/orth_adam_lr_cos2/orth_adam_lr0p0006_cos2.yaml
+bash run.sh configs/360m_4096l/sweeps/orth_adam_lr_cos2/orth_adam_lr0p0012_cos2.yaml
+bash run.sh configs/360m_4096l/sweeps/orth_adam_lr_cos2/orth_adam_lr0p002_cos2.yaml
+```
+
+## OrthMuon LR Sweep
+
+Run these 4 OrthMuon experiments with `train.cosine_power: 2`:
+
+```bash
+bash run.sh configs/360m_4096l/sweeps/orth_muon_lr_cos2/orth_muon_lr0p001_cos2.yaml
+bash run.sh configs/360m_4096l/sweeps/orth_muon_lr_cos2/orth_muon_lr0p002_cos2.yaml
+bash run.sh configs/360m_4096l/sweeps/orth_muon_lr_cos2/orth_muon_lr0p004_cos2.yaml
+bash run.sh configs/360m_4096l/sweeps/orth_muon_lr_cos2/orth_muon_lr0p008_cos2.yaml
 ```

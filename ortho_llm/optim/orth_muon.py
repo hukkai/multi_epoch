@@ -8,12 +8,7 @@ import torch.distributed as dist
 
 from .muon import orthogonalize_newton_schulz
 from .ops import polar
-from .flow_update import flow_update
-from .skew_update import skew_update_taylor
 from .stiefel_update import stiefel_update_taylor
-
-
-ORTH_MUON_UPDATE_METHODS = frozenset({"polar", "flow", "skew", "raw"})
 
 
 class OrthMuon(torch.optim.Optimizer):
@@ -27,7 +22,6 @@ class OrthMuon(torch.optim.Optimizer):
         eps: float = 1e-7,
         submat_dim: int = 64,
         strict_stiefel: bool = True,
-        update_method: str = "polar",  # Options: "polar", "flow", "skew", "raw"
     ) -> None:
         if isinstance(params, torch.nn.Parameter):
             params = [params]
@@ -42,9 +36,6 @@ class OrthMuon(torch.optim.Optimizer):
             raise ValueError(f"Invalid eps value: {eps}")
         if submat_dim <= 0:
             raise ValueError(f"Invalid submat_dim value: {submat_dim}")
-        if update_method not in ORTH_MUON_UPDATE_METHODS:
-            choices = ", ".join(sorted(ORTH_MUON_UPDATE_METHODS))
-            raise ValueError(f"update_method must be one of: {choices}")
 
         defaults = {
             "lr": lr,
@@ -54,7 +45,6 @@ class OrthMuon(torch.optim.Optimizer):
             "eps": eps,
             "submat_dim": submat_dim,
             "strict_stiefel": strict_stiefel,
-            "update_method": update_method,
         }
         super().__init__(params, defaults)
 
@@ -107,7 +97,6 @@ class OrthMuon(torch.optim.Optimizer):
             eps = group["eps"]
             submat_dim = group["submat_dim"]
             strict_stiefel = group["strict_stiefel"]
-            update_method = group["update_method"]
 
             for param in group["params"]:
                 if param.grad is None:
@@ -138,20 +127,8 @@ class OrthMuon(torch.optim.Optimizer):
                 update = update.reshape_as(x)
 
                 eta = lr * scale
-                if update_method == "polar":
-                    update.mul_(-eta)
-                    new_x = stiefel_update_taylor(x, update)
-                elif update_method == "raw":
-                    update.mul_(-eta)
-                    new_x = stiefel_update_taylor(x, update, do_projection=False)
-                elif update_method == "flow":
-                    new_x = flow_update(x, update, eta=-eta)
-                elif update_method == "skew":
-                    update.mul_(-eta)
-                    new_x = skew_update_taylor(x, update)
-                else:
-                    choices = ", ".join(sorted(ORTH_MUON_UPDATE_METHODS))
-                    raise ValueError(f"update_method must be one of: {choices}")
+                update.mul_(-eta)
+                new_x = stiefel_update_taylor(x, update)
 
                 if is_last and strict_stiefel:
                     new_x = polar(new_x)

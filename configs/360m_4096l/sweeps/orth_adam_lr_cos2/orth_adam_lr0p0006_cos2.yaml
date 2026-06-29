@@ -1,0 +1,5 @@
+extends: ../../pilot/orth_adam_360m_4096l_lrcos2.yaml
+train:
+  output: ./output/360m_4096l/sweeps/orth_adam_lr_cos2/orth_adam_lr0p0006_cos2
+  lr: 0.0006
+  min_lr: 0.00006
