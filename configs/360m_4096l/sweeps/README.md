@@ -25,5 +25,6 @@ the remaining 50 settings.
 After selecting the top 5 AdamW and top 5 Muon configs by validation loss,
 create OrthAdam/OrthMuon configs by extending those selected configs. The
 Orth follow-up should inherit the selected lr values, set
-`optim.muon_weight_decay: 0.0` for OrthMuon, and use `train.cosine_power: 2.0`
-as the fixed Orth recipe.
+`optim.muon_weight_decay: 0.0` for OrthMuon, and compare
+`train.cosine_power: 1.0` against `2.0` rather than treating Orth as fixed to
+cosine power 2.

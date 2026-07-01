@@ -117,3 +117,24 @@ bash run.sh configs/360m_4096l/sweeps/orth_muon_lr_cos2/orth_muon_lr0p002_cos2.y
 bash run.sh configs/360m_4096l/sweeps/orth_muon_lr_cos2/orth_muon_lr0p004_cos2.yaml
 bash run.sh configs/360m_4096l/sweeps/orth_muon_lr_cos2/orth_muon_lr0p008_cos2.yaml
 ```
+
+## OrthAdam LR Sweep Cos1
+
+Run these 3 additional OrthAdam experiments with `train.cosine_power: 1.0`:
+
+```bash
+bash run.sh configs/360m_4096l/sweeps/orth_adam_lr_cos1/orth_adam_lr0p0006_cos1.yaml
+bash run.sh configs/360m_4096l/sweeps/orth_adam_lr_cos1/orth_adam_lr0p0012_cos1.yaml
+bash run.sh configs/360m_4096l/sweeps/orth_adam_lr_cos1/orth_adam_lr0p002_cos1.yaml
+```
+
+## OrthMuon LR Sweep Cos1
+
+Run these 4 additional OrthMuon experiments with `train.cosine_power: 1.0`:
+
+```bash
+bash run.sh configs/360m_4096l/sweeps/orth_muon_lr_cos1/orth_muon_lr0p001_cos1.yaml
+bash run.sh configs/360m_4096l/sweeps/orth_muon_lr_cos1/orth_muon_lr0p002_cos1.yaml
+bash run.sh configs/360m_4096l/sweeps/orth_muon_lr_cos1/orth_muon_lr0p004_cos1.yaml
+bash run.sh configs/360m_4096l/sweeps/orth_muon_lr_cos1/orth_muon_lr0p008_cos1.yaml
+```
