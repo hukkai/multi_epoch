@@ -1,28 +1,5 @@
 # New Run
 
-## Before Running
-
-Open a terminal in this repository:
-
-```bash
-cd /Users/kaihu/Desktop/multi_epoch
-```
-
-## 1.3B Base Sweep
-
-Model shape:
-
-```yaml
-hidden_size: 2048
-num_layers: 24
-num_heads: 32
-num_kv_heads: 16
-batch_size: 2
-global_batch_size: 256
-seq_length: 4096
-num_steps: 48580
-eval_interval: 970
-```
 
 Run all 24 configs listed in `configs/1p3b_4096l/sweeps/all_sweeps.txt`.
 
