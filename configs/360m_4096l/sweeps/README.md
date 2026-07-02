@@ -1,30 +1,18 @@
 # 360M Base Sweeps
 
-This directory contains the first-stage base optimizer sweep to run now:
+This directory contains the 360M optimizer sweeps:
 
-- AdamW: `train.lr x train.weight_decay x train.cosine_power`
-- Muon: `optim.muon_lr x optim.muon_weight_decay x train.cosine_power`
+- AdamW: `train.lr x train.weight_decay`
+- Muon: `optim.muon_lr x optim.muon_weight_decay`
+- OrthAdam: `train.lr`
+- OrthMuon: `optim.muon_lr`
 
 The sweep ranges are:
 
-- AdamW lr: `0.0006, 0.0012, 0.002`
-- Muon lr: `0.001, 0.002, 0.004`
-- weight decay: `0.03, 0.1, 0.3`
-- cosine power: `1.0, 1.5, 2.0`
+- AdamW lr/weight decay: 11 selected pairs in `adamw_lr_wd/`
+- Muon lr/weight decay: 12 selected pairs in `muon_lr_wd/`
+- OrthAdam lr: `0.0006, 0.0012, 0.002`
+- OrthMuon lr: `0.001, 0.002, 0.004, 0.008`
 
-The full grid has 54 settings. Four settings are omitted because matching
-pilot runs already exist:
-
-- AdamW `lr=0.0012, weight_decay=0.1, cosine_power=1.0`
-- AdamW `lr=0.0012, weight_decay=0.1, cosine_power=2.0`
-- Muon `muon_lr=0.002, muon_weight_decay=0.1, cosine_power=1.0`
-- Muon `muon_lr=0.002, muon_weight_decay=0.1, cosine_power=2.0`
-
-Run every config listed in `base_adamw_muon_lr_wd_cosine_power.txt`; it contains
-the remaining 50 settings.
-After selecting the top 5 AdamW and top 5 Muon configs by validation loss,
-create OrthAdam/OrthMuon configs by extending those selected configs. The
-Orth follow-up should inherit the selected lr values, set
-`optim.muon_weight_decay: 0.0` for OrthMuon, and compare
-`train.cosine_power: 1.0` against `2.0` rather than treating Orth as fixed to
-cosine power 2.
+Run every config listed in `base_adamw_muon_lr_wd.txt` for the base AdamW/Muon
+sweep. OrthAdam and OrthMuon sweeps live in `orth_adam_lr/` and `orth_muon_lr/`.

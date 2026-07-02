@@ -1,6 +1,0 @@
-extends: ../../pilot/orth_muon_360m_4096l_lrcos2.yaml
-train:
-  output: ./output/360m_4096l/sweeps/orth_muon_lr_cos2/orth_muon_lr0p004_cos2
-optim:
-  muon_lr: 0.004
-  muon_min_lr: 0.0004

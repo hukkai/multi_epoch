@@ -1,0 +1,10 @@
+extends: ../base/muon_360m_4096l.yaml
+train:
+  output: ./output/360m_4096l/role_ablation/attn_q_muon
+optim:
+  default_role_optimizer: orth_muon
+  role_overrides:
+    attn.q: muon
+  muon_lr: 0.002
+  muon_min_lr: 0.0002
+  muon_weight_decay: 0.5

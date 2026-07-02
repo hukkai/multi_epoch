@@ -1,0 +1,7 @@
+extends: ../../base/muon_360m_4096l.yaml
+train:
+  output: ./output/360m_4096l/sweeps/muon_lr_wd/muon_lr0p008_wd0p6
+optim:
+  muon_lr: 0.008
+  muon_min_lr: 0.0008
+  muon_weight_decay: 0.6

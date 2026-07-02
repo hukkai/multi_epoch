@@ -1,0 +1,7 @@
+extends: ../../base/muon_360m_4096l.yaml
+train:
+  output: ./output/360m_4096l/sweeps/orth_muon_lr/orth_muon_lr0p004
+optim:
+  default_role_optimizer: orth_muon
+  muon_lr: 0.004
+  muon_min_lr: 0.0004

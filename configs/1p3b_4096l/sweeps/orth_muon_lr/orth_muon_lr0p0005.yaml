@@ -1,0 +1,7 @@
+extends: ../../base/muon_1p3b_4096l.yaml
+train:
+  output: ./output/1p3b_4096l/sweeps/orth_muon_lr/orth_muon_lr0p0005
+optim:
+  default_role_optimizer: orth_muon
+  muon_lr: 0.0005
+  muon_min_lr: 5.0e-05

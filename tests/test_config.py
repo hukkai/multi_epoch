@@ -98,7 +98,7 @@ def test_legacy_orth_muon_update_method_key_is_rejected() -> None:
 
 
 def test_migrated_repo_config_loads() -> None:
-    config = load_config("configs/360m_4096l/pilot/orth_adam_360m_4096l.yaml")
+    config = load_config("configs/360m_4096l/sweeps/orth_adam_lr/orth_adam_lr0p0012.yaml")
     assert config.model.enabled_roles == [
         "attn.q",
         "attn.k",

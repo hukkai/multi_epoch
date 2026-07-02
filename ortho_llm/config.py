@@ -62,7 +62,6 @@ class TrainConfig:
     min_lr: float = 1.2e-4
     weight_decay: float = 0.1
     clip_grad: float = 1.0
-    cosine_power: float = 1.0
     eval_interval: int = 0
     eval_batches: int = 0
     fail_on_nan: bool = True

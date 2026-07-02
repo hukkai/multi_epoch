@@ -58,7 +58,7 @@ def _strict_stiefel_due(setting: int | str, step: int, num_steps: int) -> bool:
 def _set_optimizer_lrs(bundle: OptimBundle, config: ExperimentConfig, step: int, warmup_steps: int) -> tuple[float, float | None]:
     train = config.train
     optim = config.optim
-    main_lr = cosine_lr(step, train.num_steps, warmup_steps, train.lr, train.min_lr, train.cosine_power)
+    main_lr = cosine_lr(step, train.num_steps, warmup_steps, train.lr, train.min_lr)
     muon_lr = None
 
     if bundle.main_optimizer is not None:
@@ -76,7 +76,6 @@ def _set_optimizer_lrs(bundle: OptimBundle, config: ExperimentConfig, step: int,
                 warmup_steps,
                 optim.muon_lr,
                 optim.muon_min_lr,
-                train.cosine_power,
             )
             for param_group in optimizer.param_groups:
                 param_group["lr"] = muon_lr

@@ -1,8 +1,0 @@
-extends: ../../base/muon_360m_4096l.yaml
-train:
-  output: ./output/360m_4096l/sweeps/muon_lr_wd_cosine_power/muon_lr0p008_wd0p6_cos1
-  cosine_power: 1.0
-optim:
-  muon_lr: 0.008
-  muon_min_lr: 0.0008
-  muon_weight_decay: 0.6

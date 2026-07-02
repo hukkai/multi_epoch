@@ -31,7 +31,6 @@ train:
   min_lr: 0.00012
   weight_decay: 0.1
   clip_grad: 1.0
-  cosine_power: 1.0
   eval_interval: 274
   eval_batches: 999999
 optim:

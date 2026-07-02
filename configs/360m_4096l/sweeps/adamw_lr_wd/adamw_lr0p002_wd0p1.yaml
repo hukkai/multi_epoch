@@ -1,0 +1,6 @@
+extends: ../../base/adamw_360m_4096l.yaml
+train:
+  output: ./output/360m_4096l/sweeps/adamw_lr_wd/adamw_lr0p002_wd0p1
+  lr: 0.002
+  min_lr: 0.0002
+  weight_decay: 0.1

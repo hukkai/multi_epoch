@@ -1,0 +1,19 @@
+extends: ../../base/adamw_1p3b_4096l.yaml
+model:
+  parameterization: grouped_matrix
+  enabled_roles:
+  - attn.q
+  - attn.k
+  - attn.v
+  - attn.o
+  - mlp.gate
+  - mlp.up
+  - mlp.down
+train:
+  output: ./output/1p3b_4096l/sweeps/orth_adam_lr/orth_adam_lr0p0012
+  lr: 0.0012
+  min_lr: 0.00012
+optim:
+  default_role_optimizer: orth_adam
+  submat_dim: 32
+  orth_adam_lr: 1.0

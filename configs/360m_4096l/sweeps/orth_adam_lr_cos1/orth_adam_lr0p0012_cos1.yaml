@@ -1,6 +1,0 @@
-extends: ../../pilot/orth_adam_360m_4096l.yaml
-train:
-  output: ./output/360m_4096l/sweeps/orth_adam_lr_cos1/orth_adam_lr0p0012_cos1
-  lr: 0.0012
-  min_lr: 0.00012
-  cosine_power: 1.0
