@@ -32,11 +32,50 @@ def mul_add_broadcast_eager(
     return orth_weight * (affine1 + affine2 + 1.0)
 
 
-if _compile_chunk_affine_enabled() and hasattr(torch, "compile"):
-    mul_add_broadcast = torch.compile(
-        mul_add_broadcast_eager,
-        fullgraph=True,
-    )
+def custom_forward_eager(
+    x: torch.Tensor,
+    affine1: torch.Tensor,
+    affine2: torch.Tensor
+) -> torch.Tensor:
+    return x * (affine1 + affine2 + 1.0)
+
+
+def custom_backward_eager(
+    x: torch.Tensor,
+    affine1: torch.Tensor,
+    affine2: torch.Tensor,
+    grad_out: torch.Tensor
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    scale = affine1 + affine2 + 1.0
+    grad_X = grad_out * scale
+    grad_a1 = (grad_out * x).sum(dim=-1, keepdim=True)
+    grad_a2 = (grad_out * x).sum(dim=-2, keepdim=True)
+    return grad_X, grad_a1, grad_a2
+
+
+custom_forward = torch.compile(custom_forward_eager, fullgraph=True)
+custom_backward = torch.compile(custom_backward_eager, fullgraph=True)
+
+
+class MulAddBroadcast(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, X, a1, a2):
+        ctx.save_for_backward(X, a1, a2)
+        if X.device.type != "cuda":
+            return custom_forward_eager(X, a1, a2)
+        return custom_forward(X, a1, a2)
+
+    @staticmethod
+    def backward(ctx, grad_out):
+        X, a1, a2 = ctx.saved_tensors
+        if grad_out.device.type != "cuda":
+            return custom_backward_eager(X, a1, a2, grad_out)
+        grad_X, grad_a1, grad_a2 = custom_backward(X, a1, a2, grad_out)
+        return grad_X, grad_a1, grad_a2
+
+
+if _compile_chunk_affine_enabled():
+    mul_add_broadcast = MulAddBroadcast.apply
 else:
     mul_add_broadcast = mul_add_broadcast_eager
 

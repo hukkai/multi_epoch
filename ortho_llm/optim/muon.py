@@ -9,6 +9,12 @@ import torch.distributed as dist
 _NS_COEFFS = (3.4445, -4.7750, 2.0315)
 
 
+def _newton_schulz_dtype(x: torch.Tensor) -> torch.dtype:
+    if x.device.type == "cuda" and x.dtype in {torch.float16, torch.bfloat16, torch.float32}:
+        return torch.bfloat16
+    return torch.float32
+
+
 @torch.no_grad()
 def orthogonalize_newton_schulz(
     x: torch.Tensor,
@@ -22,7 +28,8 @@ def orthogonalize_newton_schulz(
 
     original_shape = x.shape
     rows, cols = original_shape[-2:]
-    work = x.reshape(-1, rows, cols).float()
+    compute_dtype = _newton_schulz_dtype(x)
+    work = x.reshape(-1, rows, cols).to(dtype=compute_dtype)
 
     transposed = rows > cols
     if transposed:
@@ -32,8 +39,9 @@ def orthogonalize_newton_schulz(
     a, b, c = _NS_COEFFS
 
     for _ in range(steps):
-        xx_t = work @ work.transpose(-1, -2)
-        work = a * work + b * (xx_t @ work) + c * (xx_t @ xx_t @ work)
+        gram = work @ work.transpose(-1, -2)
+        gram_update = torch.baddbmm(gram, gram, gram, beta=b, alpha=c)
+        work = torch.baddbmm(work, gram_update, work, beta=a)
 
     if transposed:
         work = work.transpose(-1, -2)
