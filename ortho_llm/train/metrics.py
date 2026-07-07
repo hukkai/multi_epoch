@@ -41,8 +41,19 @@ def orthogonality_metrics_for_blocks(blocks: torch.Tensor) -> dict[str, float]:
     }
 
 
+def _submat_dim_for_metric(setting: int | dict[str, int], role: str) -> int:
+    if not isinstance(setting, dict):
+        return setting
+    group = role.split(".", 1)[0]
+    if role in setting:
+        return setting[role]
+    if group in setting:
+        return setting[group]
+    return setting["default"]
+
+
 @torch.no_grad()
-def role_orthogonality_metrics(model, submat_dim: int) -> dict[str, float | None]:
+def role_orthogonality_metrics(model, submat_dim: int | dict[str, int]) -> dict[str, float | None]:
     if not hasattr(model, "role_parameters"):
         return {
             "orth_error_fro_mean": None,
@@ -52,13 +63,14 @@ def role_orthogonality_metrics(model, submat_dim: int) -> dict[str, float | None
             "singular_value_max_mean": None,
         }
     metrics = []
-    for param in model.role_parameters().values():
+    for role, param in model.role_parameters().items():
         if param.ndim != 3:
             continue
+        role_submat_dim = _submat_dim_for_metric(submat_dim, role)
         rows, cols = param.shape[-2:]
-        if submat_dim > cols or rows % submat_dim != 0:
+        if role_submat_dim > cols or rows % role_submat_dim != 0:
             continue
-        blocks = param.detach().reshape(-1, submat_dim, cols)
+        blocks = param.detach().reshape(-1, role_submat_dim, cols)
         metrics.append(orthogonality_metrics_for_blocks(blocks))
     if not metrics:
         return {

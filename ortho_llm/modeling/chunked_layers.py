@@ -124,10 +124,12 @@ class RoleChunkBank(nn.Module):
     def _init_role_weights(self) -> None:
         if self.config.init == "gaussian_no_project":
             return
-        for param in self.weights.values():
-            if self.config.row_block_size is None:
-                raise ValueError("row_block_size must be set before initializing chunk weights")
-            _stiefel_block_init_3d(param, self.config.row_block_size)
+        for role in self.enabled_roles:
+            safe_name = ROLE_TO_SAFE_NAME[role]
+            submat_dim = self.config.row_block_sizes.get(role, self.config.row_block_size)
+            if submat_dim is None:
+                raise ValueError("row_block_sizes must be set before initializing chunk weights")
+            _stiefel_block_init_3d(self.weights[safe_name], submat_dim)
 
     def _rows_for_role(self, role: str) -> int:
         if role in {"attn.q", "attn.o"}:

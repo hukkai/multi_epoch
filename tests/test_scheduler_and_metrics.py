@@ -3,7 +3,7 @@ from __future__ import annotations
 import torch
 
 from ortho_llm.optim.scheduler import cosine_lr as new_cosine_lr
-from ortho_llm.train.metrics import orthogonality_metrics_for_blocks
+from ortho_llm.train.metrics import orthogonality_metrics_for_blocks, role_orthogonality_metrics
 
 
 def test_scheduler_warmup_decay_and_floor() -> None:
@@ -18,3 +18,15 @@ def test_rectangular_orthogonality_metrics() -> None:
     metrics = orthogonality_metrics_for_blocks(q)
     assert metrics["orth_error_fro_mean"] < 1.0e-5
     assert metrics["orth_error_spectral_mean"] < 1.0e-5
+
+
+def test_role_orthogonality_metrics_accept_group_submat_dims() -> None:
+    class DummyModel:
+        def role_parameters(self):
+            return {
+                "attn.q": torch.eye(8).reshape(1, 8, 8),
+                "mlp.up": torch.cat([torch.eye(8), torch.zeros(8, 8)], dim=1).reshape(1, 8, 16),
+            }
+
+    metrics = role_orthogonality_metrics(DummyModel(), {"attn": 8, "mlp": 4})
+    assert metrics["orth_error_fro_mean"] < 1.0e-5

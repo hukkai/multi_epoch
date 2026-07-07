@@ -46,6 +46,7 @@ class ModelConfig:
     init: str = "qr"
     num_kv_heads: int | None = None
     row_block_size: int | None = None
+    row_block_sizes: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -80,6 +81,7 @@ class OptimConfig:
     orth_adam_beta2: float = 0.95
     orth_adam_eps: float = 1e-8
     submat_dim: int = 64
+    submat_dim_overrides: dict[str, int] = field(default_factory=dict)
     strict_stiefel_every: int | str = "num_steps/50"
     muon_lr: float = 2.0e-3
     muon_min_lr: float = 2.0e-4
@@ -252,6 +254,46 @@ def _validate_roles(config: ExperimentConfig) -> None:
         raise ValueError(f"default_role_optimizer must be one of: {choices}")
 
 
+def _coerce_positive_int(name: str, value: Any) -> int:
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be a positive integer")
+    coerced = int(value)
+    if coerced != value or coerced <= 0:
+        raise ValueError(f"{name} must be a positive integer")
+    return coerced
+
+
+def submat_dim_for_role(optim: OptimConfig, role: str) -> int:
+    group = role.split(".", 1)[0]
+    if role in optim.submat_dim_overrides:
+        return optim.submat_dim_overrides[role]
+    if group in optim.submat_dim_overrides:
+        return optim.submat_dim_overrides[group]
+    return optim.submat_dim
+
+
+def _rows_for_role(model: ModelConfig, role: str) -> int:
+    head_dim = model.hidden_size // model.num_heads
+    kv_heads = model.num_kv_heads or model.num_heads
+    if role in {"attn.q", "attn.o"}:
+        return model.hidden_size
+    if role in {"attn.k", "attn.v"}:
+        return kv_heads * head_dim
+    if role in MLP_ROLES:
+        return model.hidden_size * model.mlp_ratio
+    raise ValueError(f"Unsupported role {role!r}")
+
+
+def _normalize_submat_dim_overrides(optim: OptimConfig) -> None:
+    allowed = set(ALL_ROLES) | {"attn", "mlp"}
+    normalized = {}
+    for key, value in optim.submat_dim_overrides.items():
+        if key not in allowed:
+            raise ValueError(f"Unknown submat_dim_overrides key {key!r}")
+        normalized[key] = _coerce_positive_int(f"submat_dim_overrides.{key}", value)
+    optim.submat_dim_overrides = normalized
+
+
 def validate_config(config: ExperimentConfig) -> ExperimentConfig:
     model = config.model
     train = config.train
@@ -275,25 +317,26 @@ def validate_config(config: ExperimentConfig) -> ExperimentConfig:
         raise ValueError("global_batch_size must be divisible by batch_size before DDP world-size adjustment")
     if train.seq_length > model.max_position_embeddings:
         raise ValueError("seq_length must be <= max_position_embeddings")
-    if optim.submat_dim <= 0:
-        raise ValueError("submat_dim must be positive")
-    kv_heads = model.num_kv_heads or model.num_heads
-    kv_dim = kv_heads * head_dim
-    intermediate_size = model.hidden_size * model.mlp_ratio
-    if model.parameterization != "dense":
-        for name, rows in (
-            ("hidden_size", model.hidden_size),
-            ("intermediate_size", intermediate_size),
-            ("kv_dim", kv_dim),
-        ):
-            if rows % optim.submat_dim != 0:
-                raise ValueError(f"{name} must be divisible by submat_dim")
-        if optim.submat_dim > model.hidden_size:
-            raise ValueError("submat_dim must be <= hidden_size")
-        if model.row_block_size is not None and model.row_block_size != optim.submat_dim:
-            raise ValueError("model.row_block_size is internal and must match optim.submat_dim")
-        model.row_block_size = optim.submat_dim
+    optim.submat_dim = _coerce_positive_int("submat_dim", optim.submat_dim)
+    _normalize_submat_dim_overrides(optim)
     _validate_roles(config)
+    if model.parameterization != "dense":
+        row_block_sizes = {}
+        for role in model.enabled_roles:
+            rows = _rows_for_role(model, role)
+            role_submat_dim = submat_dim_for_role(optim, role)
+            if rows % role_submat_dim != 0:
+                raise ValueError(f"{role} rows must be divisible by its submat_dim")
+            if role_submat_dim > model.hidden_size:
+                raise ValueError(f"{role} submat_dim must be <= hidden_size")
+            row_block_sizes[role] = role_submat_dim
+        if model.row_block_size is not None and any(
+            value != model.row_block_size for value in row_block_sizes.values()
+        ):
+            raise ValueError("model.row_block_size is internal and must match resolved submat dims")
+        unique_sizes = set(row_block_sizes.values())
+        model.row_block_size = next(iter(unique_sizes)) if len(unique_sizes) == 1 else None
+        model.row_block_sizes = row_block_sizes
     return config
 
 

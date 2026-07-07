@@ -61,6 +61,79 @@ def test_nested_orth_adam_config_sets_role_policy() -> None:
     ]
     assert config.optim.default_role_optimizer == "orth_adam"
     assert config.model.row_block_size == 4
+    assert config.model.row_block_sizes == {
+        "attn.q": 4,
+        "attn.k": 4,
+        "attn.v": 4,
+        "attn.o": 4,
+        "mlp.gate": 4,
+        "mlp.up": 4,
+        "mlp.down": 4,
+    }
+
+
+def test_submat_dim_group_overrides_resolve_by_role() -> None:
+    config = config_from_dict(
+        {
+            "model": {
+                "hidden_size": 32,
+                "num_layers": 2,
+                "num_heads": 4,
+                "mlp_ratio": 2,
+                "max_position_embeddings": 32,
+                "vocab_size": 128,
+                "parameterization": "grouped_matrix",
+                "enabled_roles": ["attn.q", "attn.k", "mlp.up", "mlp.down"],
+            },
+            "train": {
+                "batch_size": 2,
+                "global_batch_size": 2,
+                "seq_length": 16,
+                "num_steps": 5,
+            },
+            "optim": {
+                "default_role_optimizer": "orth_muon",
+                "submat_dim": 4,
+                "submat_dim_overrides": {"attn": 8, "mlp": 16},
+            },
+        }
+    )
+    assert config.model.row_block_size is None
+    assert config.model.row_block_sizes == {
+        "attn.q": 8,
+        "attn.k": 8,
+        "mlp.up": 16,
+        "mlp.down": 16,
+    }
+
+
+def test_unknown_submat_dim_override_is_rejected() -> None:
+    with pytest.raises(ValueError, match="Unknown submat_dim_overrides key"):
+        config_from_dict(
+            {
+                "model": {
+                    "hidden_size": 32,
+                    "num_layers": 2,
+                    "num_heads": 4,
+                    "mlp_ratio": 2,
+                    "max_position_embeddings": 32,
+                    "vocab_size": 128,
+                    "parameterization": "grouped_matrix",
+                    "enabled_roles": ["attn.q"],
+                },
+                "train": {
+                    "batch_size": 2,
+                    "global_batch_size": 2,
+                    "seq_length": 16,
+                    "num_steps": 5,
+                },
+                "optim": {
+                    "default_role_optimizer": "orth_muon",
+                    "submat_dim": 4,
+                    "submat_dim_overrides": {"attention": 8},
+                },
+            }
+        )
 
 
 def test_flat_config_is_rejected() -> None:

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import torch
 
-from ortho_llm.config import ALL_ROLES, ExperimentConfig
+from ortho_llm.config import ALL_ROLES, ExperimentConfig, submat_dim_for_role
 from ortho_llm.modeling.registry import ParameterRegistry, ensure_unique_parameter_ownership
 
 from .muon import Muon
@@ -56,7 +56,7 @@ def resolve_role_owners(config: ExperimentConfig, registry: ParameterRegistry | 
     return owners
 
 
-def _build_role_optimizer(kind: str, params: list[torch.nn.Parameter], config: ExperimentConfig) -> torch.optim.Optimizer:
+def _build_role_optimizer(kind: str, params, config: ExperimentConfig) -> torch.optim.Optimizer:
     optim = config.optim
     train = config.train
     if kind == "orth_adam":
@@ -117,11 +117,17 @@ def build_optimizers(config: ExperimentConfig, model: torch.nn.Module) -> OptimB
             eps=config.optim.adamw_eps,
         )
 
-    params_by_kind: dict[str, list[torch.nn.Parameter]] = {}
+    params_by_kind: dict[str, list] = {}
     for role, owner in role_to_owner.items():
         if owner in {"adamw", "frozen"}:
             continue
-        params_by_kind.setdefault(owner, []).append(role_params[role])
+        param = role_params[role]
+        if owner in {"orth_adam", "orth_muon"}:
+            params_by_kind.setdefault(owner, []).append(
+                {"params": [param], "submat_dim": submat_dim_for_role(config.optim, role)}
+            )
+        else:
+            params_by_kind.setdefault(owner, []).append(param)
 
     role_optimizers = {
         kind: _build_role_optimizer(kind, params, config)

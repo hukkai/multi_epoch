@@ -46,6 +46,9 @@ model:
 optim:
   default_role_optimizer: orth_adam
   submat_dim: 32
+  submat_dim_overrides:
+    attn: 64
+    mlp: 16
   role_overrides:
     attn.k: adamw
     attn.v: muon
@@ -70,7 +73,8 @@ K/V:              (num_layers, num_kv_heads * head_dim, hidden_size)
 ```
 
 Orthogonal optimizers split each matrix into row blocks of shape
-`(submat_dim, hidden_size)`.
+`(submat_dim, hidden_size)`. `submat_dim_overrides` can override the
+default for `attn`, `mlp`, or any individual role.
 
 Dense runs use:
 
