@@ -18,6 +18,7 @@ class OrthAdam(torch.optim.Optimizer):
         eps: float = 1e-8,
         submat_dim: int = 64,
         strict_stiefel: bool = True,
+        async_gather: bool = True,
     ) -> None:
         if isinstance(params, torch.nn.Parameter):
             params = [params]
@@ -27,6 +28,7 @@ class OrthAdam(torch.optim.Optimizer):
             "eps": eps,
             "submat_dim": submat_dim,
             "strict_stiefel": strict_stiefel,
+            "async_gather": async_gather,
         }
         super().__init__(params, defaults)
 
@@ -75,6 +77,7 @@ class OrthAdam(torch.optim.Optimizer):
                 loss = closure()
 
         world_size, rank = self._distributed_context()
+        pending_gathers = []
 
         for group in self.param_groups:
             group_lr = group["lr"] if lr is None else lr
@@ -82,6 +85,7 @@ class OrthAdam(torch.optim.Optimizer):
             eps = group["eps"]
             submat_dim = group["submat_dim"]
             strict_stiefel = group["strict_stiefel"]
+            async_gather = group.get("async_gather", True)
 
             for param in group["params"]:
                 if param.grad is None:
@@ -114,9 +118,17 @@ class OrthAdam(torch.optim.Optimizer):
 
                 new_slice = new_x.reshape_as(param_slice).to(dtype=param.dtype)
                 if world_size > 1:
-                    dist.all_gather_into_tensor(param.data, new_slice.contiguous())
+                    send_buffer = new_slice.contiguous()
+                    if async_gather:
+                        work = dist.all_gather_into_tensor(param.data, send_buffer, async_op=True)
+                        pending_gathers.append((work, send_buffer))
+                    else:
+                        dist.all_gather_into_tensor(param.data, send_buffer)
                 else:
                     param_slice.copy_(new_slice)
                 param.grad = None
+
+        for work, _send_buffer in pending_gathers:
+            work.wait()
 
         return loss

@@ -98,6 +98,36 @@ def test_orth_adam_preserves_square_and_rectangular_shapes() -> None:
         assert param.grad is None
 
 
+def test_orth_adam_waits_after_launching_async_gathers(monkeypatch) -> None:
+    params = [torch.nn.Parameter(torch.randn(4, 4, 4)) for _ in range(2)]
+    for param in params:
+        param.grad = torch.zeros_like(param)
+
+    events: list[tuple[str, int]] = []
+
+    class FakeWork:
+        def __init__(self, index: int) -> None:
+            self.index = index
+
+        def wait(self) -> None:
+            events.append(("wait", self.index))
+
+    def fake_all_gather_into_tensor(output: torch.Tensor, input: torch.Tensor, async_op: bool = False) -> FakeWork:
+        assert async_op
+        index = len(events) + 1
+        events.append(("launch", index))
+        output[: input.shape[0]].copy_(input)
+        return FakeWork(index)
+
+    monkeypatch.setattr(OrthAdam, "_distributed_context", staticmethod(lambda: (2, 0)))
+    monkeypatch.setattr("ortho_llm.optim.orth_adam.dist.all_gather_into_tensor", fake_all_gather_into_tensor)
+
+    opt = OrthAdam(params, lr=0.01, submat_dim=4)
+    opt.step()
+
+    assert events == [("launch", 1), ("launch", 2), ("wait", 1), ("wait", 2)]
+
+
 def test_muon_optimizers_preserve_shape() -> None:
     for optimizer_cls in (Muon, OrthMuon):
         param = torch.nn.Parameter(torch.randn(4, 8, 8))
