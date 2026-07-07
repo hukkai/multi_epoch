@@ -98,7 +98,14 @@ def test_orth_adam_preserves_square_and_rectangular_shapes() -> None:
         assert param.grad is None
 
 
-def test_orth_adam_waits_after_launching_async_gathers(monkeypatch) -> None:
+def _assert_waits_after_launching_async_gathers(
+    monkeypatch,
+    optimizer_cls,
+    module_path: str,
+    *,
+    optimizer_kwargs: dict | None = None,
+    step_kwargs: dict | None = None,
+) -> None:
     params = [torch.nn.Parameter(torch.randn(4, 4, 4)) for _ in range(2)]
     for param in params:
         param.grad = torch.zeros_like(param)
@@ -114,18 +121,34 @@ def test_orth_adam_waits_after_launching_async_gathers(monkeypatch) -> None:
 
     def fake_all_gather_into_tensor(output: torch.Tensor, input: torch.Tensor, async_op: bool = False) -> FakeWork:
         assert async_op
-        index = len(events) + 1
+        index = sum(event == "launch" for event, _ in events) + 1
         events.append(("launch", index))
         output[: input.shape[0]].copy_(input)
         return FakeWork(index)
 
-    monkeypatch.setattr(OrthAdam, "_distributed_context", staticmethod(lambda: (2, 0)))
-    monkeypatch.setattr("ortho_llm.optim.orth_adam.dist.all_gather_into_tensor", fake_all_gather_into_tensor)
+    monkeypatch.setattr(optimizer_cls, "_distributed_context", staticmethod(lambda: (2, 0)))
+    monkeypatch.setattr(f"{module_path}.dist.all_gather_into_tensor", fake_all_gather_into_tensor)
 
-    opt = OrthAdam(params, lr=0.01, submat_dim=4)
-    opt.step()
+    opt = optimizer_cls(params, lr=0.01, **(optimizer_kwargs or {}))
+    opt.step(**(step_kwargs or {}))
 
     assert events == [("launch", 1), ("launch", 2), ("wait", 1), ("wait", 2)]
+
+
+def test_custom_optimizers_wait_after_launching_async_gathers(monkeypatch) -> None:
+    cases = (
+        (OrthAdam, "ortho_llm.optim.orth_adam", {"submat_dim": 4}, {}),
+        (Muon, "ortho_llm.optim.muon", {}, {}),
+        (OrthMuon, "ortho_llm.optim.orth_muon", {"submat_dim": 4}, {}),
+    )
+    for optimizer_cls, module_path, optimizer_kwargs, step_kwargs in cases:
+        _assert_waits_after_launching_async_gathers(
+            monkeypatch,
+            optimizer_cls,
+            module_path,
+            optimizer_kwargs=optimizer_kwargs,
+            step_kwargs=step_kwargs,
+        )
 
 
 def test_muon_optimizers_preserve_shape() -> None:

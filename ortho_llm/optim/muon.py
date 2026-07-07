@@ -52,6 +52,7 @@ class Muon(torch.optim.Optimizer):
         nesterov: bool = True,
         ns_steps: int = 5,
         eps: float = 1e-7,
+        async_gather: bool = True,
     ) -> None:
         if lr < 0.0:
             raise ValueError(f"Invalid learning rate: {lr}")
@@ -74,6 +75,7 @@ class Muon(torch.optim.Optimizer):
             "nesterov": nesterov,
             "ns_steps": ns_steps,
             "eps": eps,
+            "async_gather": async_gather,
         }
         super().__init__(params, defaults)
 
@@ -107,6 +109,7 @@ class Muon(torch.optim.Optimizer):
                 loss = closure()
 
         world_size, rank = self._distributed_context()
+        pending_gathers = []
 
         for group in self.param_groups:
             lr = group["lr"]
@@ -118,6 +121,7 @@ class Muon(torch.optim.Optimizer):
             nesterov = group["nesterov"]
             ns_steps = group["ns_steps"]
             eps = group["eps"]
+            async_gather = group.get("async_gather", True)
 
             for param in group["params"]:
                 if param.grad is None:
@@ -154,6 +158,13 @@ class Muon(torch.optim.Optimizer):
 
                 if world_size > 1:
                     send_buffer = param_slice.detach().clone().contiguous()
-                    dist.all_gather_into_tensor(param.data, send_buffer)
+                    if async_gather:
+                        work = dist.all_gather_into_tensor(param.data, send_buffer, async_op=True)
+                        pending_gathers.append((work, send_buffer))
+                    else:
+                        dist.all_gather_into_tensor(param.data, send_buffer)
+
+        for work, _send_buffer in pending_gathers:
+            work.wait()
 
         return loss
