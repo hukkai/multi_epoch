@@ -1,6 +1,0 @@
-extends: 01_grouped_no_chunk_affine_adamw.yaml
-model:
-  layer_weight_access: unbind
-train:
-  output: ./output/1p3b_4096l/speed_check/06_grouped_no_chunk_affine_adamw_unbind
-

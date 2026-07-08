@@ -165,33 +165,22 @@ class RoleChunkBank(nn.Module):
         self,
         role: str,
         layer_idx: int,
-        layer_views: RoleLayerViews | None = None,
+        layer_views: RoleLayerViews,
     ) -> torch.Tensor:
-        safe_name = ROLE_TO_SAFE_NAME[role]
-        weight = (
-            layer_views.weights[role][layer_idx]
-            if layer_views is not None
-            else self.weights[safe_name][layer_idx]
-        )
+        weight = layer_views.weights[role][layer_idx]
         if not self.config.chunk_affine:
             return weight
-        if layer_views is not None:
-            return mul_add_broadcast(
-                weight,
-                layer_views.affine1[role][layer_idx],
-                layer_views.affine2[role][layer_idx],
-            )
         return mul_add_broadcast(
             weight,
-            self.affine1[safe_name][layer_idx],
-            self.affine2[safe_name][layer_idx],
+            layer_views.affine1[role][layer_idx],
+            layer_views.affine2[role][layer_idx],
         )
 
     def attention_weight(
         self,
         role: str,
         layer_idx: int,
-        layer_views: RoleLayerViews | None = None,
+        layer_views: RoleLayerViews,
     ) -> torch.Tensor:
         return self._role_weight(role, layer_idx, layer_views)
 
@@ -199,7 +188,7 @@ class RoleChunkBank(nn.Module):
         self,
         role: str,
         layer_idx: int,
-        layer_views: RoleLayerViews | None = None,
+        layer_views: RoleLayerViews,
     ) -> torch.Tensor:
         return self._role_weight(role, layer_idx, layer_views)
 
@@ -269,7 +258,7 @@ class HybridAttention(nn.Module):
         attr: str,
         bank: RoleChunkBank,
         layer_idx: int,
-        layer_views: RoleLayerViews | None,
+        layer_views: RoleLayerViews,
     ) -> torch.Tensor:
         if role in self.enabled_roles:
             return F.linear(x, bank.attention_weight(role, layer_idx, layer_views))
@@ -282,7 +271,7 @@ class HybridAttention(nn.Module):
         layer_idx: int,
         cos: torch.Tensor,
         sin: torch.Tensor,
-        layer_views: RoleLayerViews | None = None,
+        layer_views: RoleLayerViews,
     ) -> torch.Tensor:
         batch_size, seq_len, _ = x.shape
         q = self._linear(x, "attn.q", "q_proj", bank, layer_idx, layer_views)
@@ -327,7 +316,7 @@ class HybridMLP(nn.Module):
         attr: str,
         bank: RoleChunkBank,
         layer_idx: int,
-        layer_views: RoleLayerViews | None,
+        layer_views: RoleLayerViews,
     ) -> torch.Tensor:
         if role in self.enabled_roles:
             return F.linear(x, bank.mlp_weight(role, layer_idx, layer_views))
@@ -338,7 +327,7 @@ class HybridMLP(nn.Module):
         x: torch.Tensor,
         bank: RoleChunkBank,
         layer_idx: int,
-        layer_views: RoleLayerViews | None,
+        layer_views: RoleLayerViews,
     ) -> torch.Tensor:
         if "mlp.down" in self.enabled_roles:
             return F.linear(x, bank.mlp_weight("mlp.down", layer_idx, layer_views).T)
@@ -349,7 +338,7 @@ class HybridMLP(nn.Module):
         x: torch.Tensor,
         bank: RoleChunkBank,
         layer_idx: int,
-        layer_views: RoleLayerViews | None = None,
+        layer_views: RoleLayerViews,
     ) -> torch.Tensor:
         gated = F.silu(self._in_proj(x, "mlp.gate", "gate_proj", bank, layer_idx, layer_views))
         up = self._in_proj(x, "mlp.up", "up_proj", bank, layer_idx, layer_views)
@@ -371,7 +360,7 @@ class HybridBlock(nn.Module):
         bank: RoleChunkBank,
         cos: torch.Tensor,
         sin: torch.Tensor,
-        layer_views: RoleLayerViews | None = None,
+        layer_views: RoleLayerViews,
     ) -> torch.Tensor:
         x = x + self.self_attn(self.input_layernorm(x), bank, self.layer_idx, cos, sin, layer_views)
         x = x + self.mlp(self.post_attention_layernorm(x), bank, self.layer_idx, layer_views)
@@ -423,7 +412,7 @@ class RoleChunkedLlamaForCausalLM(nn.Module):
             raise ValueError("Sequence length exceeds max_position_embeddings")
         x = self.embed_tokens(input_ids)
         cos, sin = self.rotary_emb(x.shape[1], device=x.device, dtype=x.dtype)
-        layer_views = self.chunk_bank.layer_views() if self.config.layer_weight_access == "unbind" else None
+        layer_views = self.chunk_bank.layer_views()
 
         for layer in self.layers:
             x = layer(x, self.chunk_bank, cos, sin, layer_views)

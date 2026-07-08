@@ -7,7 +7,7 @@ from ortho_llm.modeling import build_model
 from ortho_llm.modeling import chunked_layers
 
 
-def tiny_config(enabled_roles: list[str], *, layer_weight_access: str = "index"):
+def tiny_config(enabled_roles: list[str]):
     parameterization = "grouped_matrix" if enabled_roles else "dense"
     return config_from_dict(
         {
@@ -20,7 +20,6 @@ def tiny_config(enabled_roles: list[str], *, layer_weight_access: str = "index")
                 "max_position_embeddings": 32,
                 "parameterization": parameterization,
                 "enabled_roles": enabled_roles,
-                "layer_weight_access": layer_weight_access,
             },
             "train": {
                 "batch_size": 2,
@@ -92,9 +91,10 @@ def test_chunk_affine_is_applied_after_layer_slice(monkeypatch) -> None:
     monkeypatch.setattr(chunked_layers, "mul_add_broadcast", spy_mul_add_broadcast)
     config = tiny_config(["attn.q", "mlp.up"])
     model = build_model(config.model)
+    layer_views = model.chunk_bank.layer_views()
 
-    attn_weight = model.chunk_bank.attention_weight("attn.q", layer_idx=1)
-    mlp_weight = model.chunk_bank.mlp_weight("mlp.up", layer_idx=0)
+    attn_weight = model.chunk_bank.attention_weight("attn.q", layer_idx=1, layer_views=layer_views)
+    mlp_weight = model.chunk_bank.mlp_weight("mlp.up", layer_idx=0, layer_views=layer_views)
 
     assert tuple(attn_weight.shape) == (32, 32)
     assert tuple(mlp_weight.shape) == (64, 32)
@@ -137,21 +137,17 @@ def test_grouped_matrix_gqa_kv_storage_is_rectangular() -> None:
     assert torch.isfinite(output["loss"])
 
 
-def test_grouped_matrix_unbind_weight_access_matches_index_and_backprops() -> None:
+def test_grouped_matrix_forward_uses_unbound_views_and_backprops() -> None:
     roles = ["attn.q", "attn.k", "attn.v", "attn.o", "mlp.gate", "mlp.up", "mlp.down"]
-    index_config = tiny_config(roles, layer_weight_access="index")
-    unbind_config = tiny_config(roles, layer_weight_access="unbind")
     torch.manual_seed(1234)
-    index_model = build_model(index_config.model)
-    unbind_model = build_model(unbind_config.model)
-    unbind_model.load_state_dict(index_model.state_dict())
+    config = tiny_config(roles)
+    model = build_model(config.model)
 
-    input_ids = torch.randint(0, index_config.model.vocab_size, (2, 16))
-    labels = torch.randint(0, index_config.model.vocab_size, (2, 16))
-    index_output = index_model(input_ids=input_ids, labels=labels)
-    unbind_output = unbind_model(input_ids=input_ids, labels=labels)
+    input_ids = torch.randint(0, config.model.vocab_size, (2, 16))
+    labels = torch.randint(0, config.model.vocab_size, (2, 16))
+    output = model(input_ids=input_ids, labels=labels)
 
-    assert torch.allclose(index_output["logits"], unbind_output["logits"])
-    assert torch.allclose(index_output["loss"], unbind_output["loss"])
-    unbind_output["loss"].backward()
-    assert unbind_model.chunk_bank.weights["attn_q"].grad is not None
+    assert output["logits"].shape == (2, 16, config.model.vocab_size)
+    assert torch.isfinite(output["loss"])
+    output["loss"].backward()
+    assert model.chunk_bank.weights["attn_q"].grad is not None

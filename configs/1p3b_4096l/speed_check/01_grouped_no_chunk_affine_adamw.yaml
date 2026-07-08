@@ -10,7 +10,6 @@ model:
   - mlp.up
   - mlp.down
   chunk_affine: false
-  layer_weight_access: index
 train:
   output: ./output/1p3b_4096l/speed_check/01_grouped_no_chunk_affine_adamw
 optim:

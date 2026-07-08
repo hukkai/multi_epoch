@@ -9,11 +9,11 @@ model:
   - mlp.gate
   - mlp.up
   - mlp.down
-  chunk_affine: false
-  layer_weight_access: index
+  chunk_affine: true
 train:
-  output: ./output/1p3b_4096l/speed_check/03_grouped_no_chunk_affine_orth_adamw
+  output: ./output/1p3b_4096l/speed_check/03_grouped_chunk_affine_orth_adamw
 optim:
   default_role_optimizer: orth_adam
   submat_dim: 32
   orth_adam_lr: 1.0
+

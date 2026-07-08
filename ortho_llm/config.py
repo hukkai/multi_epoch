@@ -17,7 +17,6 @@ SAFE_NAME_TO_ROLE = {value: key for key, value in ROLE_TO_SAFE_NAME.items()}
 
 OPTIMIZER_CHOICES = {"adamw", "orth_adam", "muon", "orth_muon", "frozen"}
 PARAMETERIZATION_CHOICES = {"dense", "grouped_matrix"}
-LAYER_WEIGHT_ACCESS_CHOICES = {"index", "unbind"}
 INIT_CHOICES = {"qr", "gaussian_then_project", "gaussian_no_project"}
 
 
@@ -44,7 +43,6 @@ class ModelConfig:
     parameterization: str = "dense"
     enabled_roles: list[str] = field(default_factory=list)
     chunk_affine: bool = True
-    layer_weight_access: str = "index"
     init: str = "qr"
     num_kv_heads: int | None = None
     row_block_size: int | None = None
@@ -235,9 +233,6 @@ def _validate_roles(config: ExperimentConfig) -> None:
     if model.parameterization not in PARAMETERIZATION_CHOICES:
         choices = ", ".join(sorted(PARAMETERIZATION_CHOICES))
         raise ValueError(f"parameterization must be one of: {choices}")
-    if model.layer_weight_access not in LAYER_WEIGHT_ACCESS_CHOICES:
-        choices = ", ".join(sorted(LAYER_WEIGHT_ACCESS_CHOICES))
-        raise ValueError(f"layer_weight_access must be one of: {choices}")
     if model.init not in INIT_CHOICES:
         choices = ", ".join(sorted(INIT_CHOICES))
         raise ValueError(f"init must be one of: {choices}")

@@ -1,7 +1,6 @@
 extends: ../base/muon_1p3b_4096l.yaml
 model:
   chunk_affine: true
-  layer_weight_access: index
 train:
   output: ./output/1p3b_4096l/speed_check/05_grouped_chunk_affine_orth_muon
 optim:

@@ -97,32 +97,6 @@ def test_legacy_orth_muon_update_method_key_is_rejected() -> None:
         )
 
 
-def test_invalid_layer_weight_access_is_rejected() -> None:
-    with pytest.raises(ValueError, match="layer_weight_access"):
-        config_from_dict(
-            {
-                "model": {
-                    "hidden_size": 32,
-                    "num_layers": 2,
-                    "num_heads": 4,
-                    "mlp_ratio": 2,
-                    "max_position_embeddings": 32,
-                    "vocab_size": 128,
-                    "parameterization": "grouped_matrix",
-                    "enabled_roles": ["attn.q"],
-                    "layer_weight_access": "slice",
-                },
-                "train": {
-                    "batch_size": 2,
-                    "global_batch_size": 2,
-                    "seq_length": 16,
-                    "num_steps": 5,
-                },
-                "optim": {"submat_dim": 4},
-            }
-        )
-
-
 def test_migrated_repo_config_loads() -> None:
     config = load_config("configs/360m_4096l/sweeps/orth_adam_lr/orth_adam_lr0p0012.yaml")
     assert config.model.enabled_roles == [
