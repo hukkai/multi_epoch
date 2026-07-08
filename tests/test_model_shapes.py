@@ -7,7 +7,7 @@ from ortho_llm.modeling import build_model
 from ortho_llm.modeling import chunked_layers
 
 
-def tiny_config(enabled_roles: list[str]):
+def tiny_config(enabled_roles: list[str], *, layer_weight_access: str = "index"):
     parameterization = "grouped_matrix" if enabled_roles else "dense"
     return config_from_dict(
         {
@@ -20,6 +20,7 @@ def tiny_config(enabled_roles: list[str]):
                 "max_position_embeddings": 32,
                 "parameterization": parameterization,
                 "enabled_roles": enabled_roles,
+                "layer_weight_access": layer_weight_access,
             },
             "train": {
                 "batch_size": 2,
@@ -134,3 +135,23 @@ def test_grouped_matrix_gqa_kv_storage_is_rectangular() -> None:
     output = model(input_ids=input_ids, labels=labels)
     assert output["logits"].shape == (2, 16, config.model.vocab_size)
     assert torch.isfinite(output["loss"])
+
+
+def test_grouped_matrix_unbind_weight_access_matches_index_and_backprops() -> None:
+    roles = ["attn.q", "attn.k", "attn.v", "attn.o", "mlp.gate", "mlp.up", "mlp.down"]
+    index_config = tiny_config(roles, layer_weight_access="index")
+    unbind_config = tiny_config(roles, layer_weight_access="unbind")
+    torch.manual_seed(1234)
+    index_model = build_model(index_config.model)
+    unbind_model = build_model(unbind_config.model)
+    unbind_model.load_state_dict(index_model.state_dict())
+
+    input_ids = torch.randint(0, index_config.model.vocab_size, (2, 16))
+    labels = torch.randint(0, index_config.model.vocab_size, (2, 16))
+    index_output = index_model(input_ids=input_ids, labels=labels)
+    unbind_output = unbind_model(input_ids=input_ids, labels=labels)
+
+    assert torch.allclose(index_output["logits"], unbind_output["logits"])
+    assert torch.allclose(index_output["loss"], unbind_output["loss"])
+    unbind_output["loss"].backward()
+    assert unbind_model.chunk_bank.weights["attn_q"].grad is not None
