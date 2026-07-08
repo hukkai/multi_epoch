@@ -1,0 +1,4 @@
+extends: ../base/adamw_1p3b_4096l.yaml
+train:
+  output: ./output/1p3b_4096l/speed_check/00_dense_adamw
+

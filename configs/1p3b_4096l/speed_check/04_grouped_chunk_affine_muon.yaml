@@ -1,0 +1,8 @@
+extends: ../base/muon_1p3b_4096l.yaml
+model:
+  chunk_affine: true
+  layer_weight_access: index
+train:
+  output: ./output/1p3b_4096l/speed_check/04_grouped_chunk_affine_muon
+optim:
+  default_role_optimizer: muon

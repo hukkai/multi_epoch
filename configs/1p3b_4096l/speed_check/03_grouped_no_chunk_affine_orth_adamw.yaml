@@ -1,0 +1,19 @@
+extends: ../base/adamw_1p3b_4096l.yaml
+model:
+  parameterization: grouped_matrix
+  enabled_roles:
+  - attn.q
+  - attn.k
+  - attn.v
+  - attn.o
+  - mlp.gate
+  - mlp.up
+  - mlp.down
+  chunk_affine: false
+  layer_weight_access: index
+train:
+  output: ./output/1p3b_4096l/speed_check/03_grouped_no_chunk_affine_orth_adamw
+optim:
+  default_role_optimizer: orth_adam
+  submat_dim: 32
+  orth_adam_lr: 1.0
