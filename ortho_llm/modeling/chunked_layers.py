@@ -22,71 +22,9 @@ from ortho_llm.modeling.llama import (
 from ortho_llm.modeling.registry import MatrixSpec, ParameterRegistry
 
 
-def _compile_chunk_affine_enabled() -> bool:
-    return True
-
-
-def mul_add_broadcast_eager(
-    orth_weight: torch.Tensor,
-    affine1: torch.Tensor,
-    affine2: torch.Tensor,
-) -> torch.Tensor:
-    return orth_weight * (affine1 + affine2 + 1.0)
-
-
-def custom_forward_eager(
-    x: torch.Tensor,
-    affine1: torch.Tensor,
-    affine2: torch.Tensor
-) -> torch.Tensor:
-    return x * (affine1 + affine2 + 1.0)
-
-
-def custom_backward_eager(
-    x: torch.Tensor,
-    affine1: torch.Tensor,
-    affine2: torch.Tensor,
-    grad_out: torch.Tensor
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    scale = affine1 + affine2 + 1.0
-    grad_X = grad_out * scale
-    grad_a1 = (grad_out * x).sum(dim=-1, keepdim=True)
-    grad_a2 = (grad_out * x).sum(dim=-2, keepdim=True)
-    return grad_X, grad_a1, grad_a2
-
-
-custom_forward = torch.compile(custom_forward_eager, fullgraph=True)
-custom_backward = torch.compile(custom_backward_eager, fullgraph=True)
-
-
-class MulAddBroadcast(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, X, a1, a2):
-        ctx.save_for_backward(X, a1, a2)
-        if X.device.type != "cuda":
-            return custom_forward_eager(X, a1, a2)
-        return custom_forward(X, a1, a2)
-
-    @staticmethod
-    def backward(ctx, grad_out):
-        X, a1, a2 = ctx.saved_tensors
-        if grad_out.device.type != "cuda":
-            return custom_backward_eager(X, a1, a2, grad_out)
-        grad_X, grad_a1, grad_a2 = custom_backward(X, a1, a2, grad_out)
-        return grad_X, grad_a1.view(-1, 1), grad_a2.view(1, -1)
-
-
-if _compile_chunk_affine_enabled():
-    mul_add_broadcast = MulAddBroadcast.apply
-else:
-    mul_add_broadcast = mul_add_broadcast_eager
-
-
 @dataclass(frozen=True)
 class RoleLayerViews:
     weights: dict[str, tuple[torch.Tensor, ...]]
-    affine1: dict[str, tuple[torch.Tensor, ...]]
-    affine2: dict[str, tuple[torch.Tensor, ...]]
 
 
 def _stiefel_block_init_3d(param: nn.Parameter, submat_dim: int) -> None:
@@ -114,8 +52,6 @@ class RoleChunkBank(nn.Module):
         self.kv_hidden_size = self.num_kv_heads * self.head_dim
         self.enabled_roles = tuple(config.enabled_roles)
         self.weights = nn.ParameterDict()
-        self.affine1 = nn.ParameterDict()
-        self.affine2 = nn.ParameterDict()
 
         for role in self.enabled_roles:
             safe_name = ROLE_TO_SAFE_NAME[role]
@@ -123,9 +59,6 @@ class RoleChunkBank(nn.Module):
             weight = nn.Parameter(torch.empty(config.num_layers, rows, config.hidden_size))
             nn.init.normal_(weight, mean=0.0, std=config.hidden_size**-0.5)
             self.weights[safe_name] = weight
-            if config.chunk_affine:
-                self.affine1[safe_name] = nn.Parameter(torch.zeros(config.num_layers, rows, 1))
-                self.affine2[safe_name] = nn.Parameter(torch.zeros(config.num_layers, 1, config.hidden_size))
 
         self._init_role_weights()
         self.registry = self._build_registry()
@@ -149,15 +82,10 @@ class RoleChunkBank(nn.Module):
 
     def layer_views(self) -> RoleLayerViews:
         weights: dict[str, tuple[torch.Tensor, ...]] = {}
-        affine1: dict[str, tuple[torch.Tensor, ...]] = {}
-        affine2: dict[str, tuple[torch.Tensor, ...]] = {}
         for role in self.enabled_roles:
             safe_name = ROLE_TO_SAFE_NAME[role]
             weights[role] = tuple(self.weights[safe_name].unbind(0))
-            if self.config.chunk_affine:
-                affine1[role] = tuple(self.affine1[safe_name].unbind(0))
-                affine2[role] = tuple(self.affine2[safe_name].unbind(0))
-        return RoleLayerViews(weights=weights, affine1=affine1, affine2=affine2)
+        return RoleLayerViews(weights=weights)
 
     def _role_weight(
         self,
@@ -165,14 +93,7 @@ class RoleChunkBank(nn.Module):
         layer_idx: int,
         layer_views: RoleLayerViews,
     ) -> torch.Tensor:
-        weight = layer_views.weights[role][layer_idx]
-        if not self.config.chunk_affine:
-            return weight
-        return mul_add_broadcast(
-            weight,
-            layer_views.affine1[role][layer_idx],
-            layer_views.affine2[role][layer_idx],
-        )
+        return layer_views.weights[role][layer_idx]
 
     def attention_weight(
         self,

@@ -1,6 +1,0 @@
-extends: muon_lr0p002_wd0p3.yaml
-model:
-  chunk_affine: false
-train:
-  output: ./output/360m_4096l/sweeps/muon_lr_wd/muon_lr0p002_wd0p3_no_affine
-

@@ -4,8 +4,6 @@ import torch
 
 from ortho_llm.config import config_from_dict
 from ortho_llm.modeling import build_model
-from ortho_llm.modeling import chunked_layers
-
 
 def tiny_config(enabled_roles: list[str]):
     parameterization = "grouped_matrix" if enabled_roles else "dense"
@@ -77,18 +75,7 @@ def test_grouped_matrix_modes_build_and_store_expected_shapes() -> None:
         assert torch.isfinite(output["loss"])
 
 
-def test_chunk_affine_is_applied_after_layer_slice(monkeypatch) -> None:
-    seen_shapes = []
-
-    def spy_mul_add_broadcast(
-        weight: torch.Tensor,
-        affine1: torch.Tensor,
-        affine2: torch.Tensor,
-    ) -> torch.Tensor:
-        seen_shapes.append((tuple(weight.shape), tuple(affine1.shape), tuple(affine2.shape)))
-        return weight * (affine1 + affine2 + 1.0)
-
-    monkeypatch.setattr(chunked_layers, "mul_add_broadcast", spy_mul_add_broadcast)
+def test_chunk_bank_returns_layer_sliced_weights() -> None:
     config = tiny_config(["attn.q", "mlp.up"])
     model = build_model(config.model)
     layer_views = model.chunk_bank.layer_views()
@@ -98,10 +85,8 @@ def test_chunk_affine_is_applied_after_layer_slice(monkeypatch) -> None:
 
     assert tuple(attn_weight.shape) == (32, 32)
     assert tuple(mlp_weight.shape) == (64, 32)
-    assert seen_shapes == [
-        ((32, 32), (32, 1), (1, 32)),
-        ((64, 32), (64, 1), (1, 32)),
-    ]
+    assert attn_weight is layer_views.weights["attn.q"][1]
+    assert mlp_weight is layer_views.weights["mlp.up"][0]
 
 
 def test_grouped_matrix_gqa_kv_storage_is_rectangular() -> None:
