@@ -73,7 +73,7 @@ class MulAddBroadcast(torch.autograd.Function):
         if grad_out.device.type != "cuda":
             return custom_backward_eager(X, a1, a2, grad_out)
         grad_X, grad_a1, grad_a2 = custom_backward(X, a1, a2, grad_out)
-        return grad_X, grad_a1, grad_a2
+        return grad_X, grad_a1.view(-1, 1), grad_a2.view(1, -1)
 
 
 if _compile_chunk_affine_enabled():
