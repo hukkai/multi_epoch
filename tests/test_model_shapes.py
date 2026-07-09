@@ -91,9 +91,10 @@ def test_chunk_affine_is_applied_after_layer_slice(monkeypatch) -> None:
     monkeypatch.setattr(chunked_layers, "mul_add_broadcast", spy_mul_add_broadcast)
     config = tiny_config(["attn.q", "mlp.up"])
     model = build_model(config.model)
+    layer_views = model.chunk_bank.layer_views()
 
-    attn_weight = model.chunk_bank.attention_weight("attn.q", layer_idx=1)
-    mlp_weight = model.chunk_bank.mlp_weight("mlp.up", layer_idx=0)
+    attn_weight = model.chunk_bank.attention_weight("attn.q", layer_idx=1, layer_views=layer_views)
+    mlp_weight = model.chunk_bank.mlp_weight("mlp.up", layer_idx=0, layer_views=layer_views)
 
     assert tuple(attn_weight.shape) == (32, 32)
     assert tuple(mlp_weight.shape) == (64, 32)

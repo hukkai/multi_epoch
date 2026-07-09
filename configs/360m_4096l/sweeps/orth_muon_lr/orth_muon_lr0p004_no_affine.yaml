@@ -1,0 +1,6 @@
+extends: orth_muon_lr0p004.yaml
+model:
+  chunk_affine: false
+train:
+  output: ./output/360m_4096l/sweeps/orth_muon_lr/orth_muon_lr0p004_no_affine
+
