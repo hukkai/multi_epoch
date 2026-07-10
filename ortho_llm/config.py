@@ -319,6 +319,7 @@ def load_config(config_path: str | Path, overrides: list[str] | tuple[str, ...] 
 
 def dump_config(config: ExperimentConfig, path: str | Path) -> None:
     output = config.to_dict()
+    output.pop("config_path", None)
     Path(path).write_text(yaml.safe_dump(output, sort_keys=False), encoding="utf-8")
 
 

@@ -12,10 +12,7 @@ def resolve_data_path(data_dir: str, rank: int) -> Path:
     shard_path = root / f"tokens_{rank}.bin"
     if shard_path.exists():
         return shard_path
-    fallback_path = root / "tokens_0.bin"
-    if fallback_path.exists():
-        return fallback_path
-    raise FileNotFoundError(f"Could not find tokens_{rank}.bin or tokens_0.bin under {data_dir}")
+    raise FileNotFoundError(f"Could not find required shard tokens_{rank}.bin under {data_dir}")
 
 
 @dataclass
