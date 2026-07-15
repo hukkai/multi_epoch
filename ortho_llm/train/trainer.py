@@ -138,14 +138,16 @@ def _load_resume(
     model: torch.nn.Module,
     bundle: OptimBundle,
     dataset: MemmapTokenDataset,
-    device: torch.device,
     *,
     rank: int,
     world_size: int,
 ) -> int:
     if not config.train.resume:
         return 0
-    state = load_checkpoint(config.train.resume, map_location=device)
+    # RNG state tensors are CPU state even for CUDA training.  Loading the
+    # checkpoint on CPU keeps them valid for torch.set_rng_state; model and
+    # optimizer loaders move tensor state to their parameter devices.
+    state = load_checkpoint(config.train.resume, map_location="cpu")
     rank_state_files = state.get("rank_state_files")
     if world_size > 1 and rank_state_files is None:
         raise ValueError(
@@ -157,31 +159,36 @@ def _load_resume(
             f"Checkpoint world size {checkpoint_world_size} does not match current world size {world_size}"
         )
 
+    if "optimizers" not in state:
+        raise ValueError("Checkpoint is missing optimizer state required for resume")
+
     model.load_state_dict(state["model"])
-    if "optimizers" in state:
-        bundle.load_state_dict(state["optimizers"])
+    bundle.load_state_dict(
+        state["optimizers"],
+        load_role_optimizers=rank_state_files is None,
+    )
     step = int(state.get("step", 0))
 
     if rank_state_files is not None:
         if not isinstance(rank_state_files, list) or len(rank_state_files) != world_size:
             raise ValueError("Checkpoint rank_state_files does not match its world size")
         rank_state_path = Path(config.train.resume).parent / rank_state_files[rank]
-        rank_state = load_checkpoint(rank_state_path, map_location=device)
+        rank_state = load_checkpoint(rank_state_path, map_location="cpu")
         if int(rank_state.get("rank", -1)) != rank:
             raise ValueError(f"Rank checkpoint {rank_state_path} belongs to a different rank")
         if int(rank_state.get("world_size", -1)) != world_size:
             raise ValueError(f"Rank checkpoint {rank_state_path} has a different world size")
         if int(rank_state.get("step", -1)) != step:
             raise ValueError(f"Rank checkpoint {rank_state_path} has a different training step")
-        role_optimizer_states = rank_state.get("role_optimizers", {})
-        if set(role_optimizer_states) != set(bundle.role_optimizers):
-            raise ValueError(f"Rank checkpoint {rank_state_path} has different role optimizers")
-        bundle.load_state_dict({"role_optimizers": role_optimizer_states})
+        if "role_optimizers" not in rank_state:
+            raise ValueError(f"Rank checkpoint {rank_state_path} is missing role optimizer state")
+        bundle.load_role_optimizer_states(rank_state["role_optimizers"])
         dataset.load_state_dict(rank_state["dataset"])
         load_rng_state_dict(rank_state["rng"])
     else:
-        if "dataset" in state:
-            dataset.load_state_dict(state["dataset"])
+        if "dataset" not in state:
+            raise ValueError("Checkpoint is missing dataset state required for resume")
+        dataset.load_state_dict(state["dataset"])
         if "rng" in state:
             load_rng_state_dict(state["rng"])
     return step
@@ -235,7 +242,6 @@ def train(config: ExperimentConfig) -> None:
         raw_model,
         bundle,
         dataset,
-        device,
         rank=rank,
         world_size=world_size,
     )
