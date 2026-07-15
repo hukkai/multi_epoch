@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from ortho_llm.config import ATTN_ROLES, MLP_ROLES, config_from_dict, load_config
+from ortho_llm.config import ATTN_ROLES, MLP_ROLES, config_from_dict, dump_config, load_config
 
 
 CONFIG_PATHS = sorted(Path("configs").rglob("*.yaml"))
@@ -151,6 +151,22 @@ optim:
     assert config.train.lr == 0.002
     assert config.train.weight_decay == 0.1
     assert config.optim.adamw_beta2 == 0.98
+
+
+def test_resolved_config_round_trips_without_source_path(tmp_path: Path) -> None:
+    config = load_config("configs/360m_4096l/sweeps/orth_adam_lr/orth_adam_lr0p0012.yaml")
+    resolved_path = tmp_path / "resolved_config.yaml"
+
+    dump_config(config, resolved_path)
+    reloaded = load_config(resolved_path)
+
+    assert "config_path:" not in resolved_path.read_text(encoding="utf-8")
+    assert reloaded.data == config.data
+    assert reloaded.model == config.model
+    assert reloaded.train == config.train
+    assert reloaded.optim == config.optim
+    assert reloaded.logging == config.logging
+    assert reloaded.checkpoint == config.checkpoint
 
 
 @pytest.mark.parametrize("config_path", CONFIG_PATHS, ids=lambda path: str(path))

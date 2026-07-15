@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import pytest
 import torch
 
 from ortho_llm.config import config_from_dict
 from ortho_llm.modeling import build_model
-from ortho_llm.optim import Muon, OrthAdam, OrthMuon, build_optimizers
+from ortho_llm.optim import Muon, OptimBundle, OrthAdam, OrthMuon, build_optimizers
 from ortho_llm.optim.stiefel_update import (
     _COEFFS2,
     _COEFFS3,
@@ -26,6 +27,107 @@ def _apply_series_reference(
         term = gram_error @ term
         q = q + coeff * term
     return q
+
+
+def _make_state_test_bundle(
+    *,
+    with_main: bool = True,
+    role_order: tuple[str, ...] = ("attn.q", "attn.o"),
+) -> OptimBundle:
+    role_params = [torch.nn.Parameter(torch.zeros(2, 2)) for _ in role_order]
+    main_optimizer = None
+    if with_main:
+        main_optimizer = torch.optim.SGD(
+            [torch.nn.Parameter(torch.zeros(2, 2))],
+            lr=0.1,
+            momentum=0.9,
+        )
+    return OptimBundle(
+        main_optimizer=main_optimizer,
+        role_optimizers={
+            "muon": torch.optim.SGD(role_params, lr=0.1, momentum=0.9),
+        },
+        role_to_optimizer={role: "muon" for role in role_order},
+    )
+
+
+def _step_with_distinct_gradients(optimizer: torch.optim.Optimizer) -> None:
+    for value, param in enumerate(optimizer.param_groups[0]["params"], start=1):
+        param.grad = torch.full_like(param, float(value))
+    optimizer.step()
+
+
+def test_optimizer_restore_rejects_reordered_same_shaped_roles() -> None:
+    saved_bundle = _make_state_test_bundle(role_order=("attn.q", "attn.o"))
+    _step_with_distinct_gradients(saved_bundle.role_optimizers["muon"])
+    current_bundle = _make_state_test_bundle(role_order=("attn.o", "attn.q"))
+
+    with pytest.raises(ValueError, match="ordered role ownership"):
+        current_bundle.load_state_dict(saved_bundle.state_dict())
+
+
+def test_optimizer_restore_requires_role_mapping_and_main_presence() -> None:
+    bundle = _make_state_test_bundle()
+    missing_mapping = bundle.state_dict()
+    missing_mapping.pop("role_to_optimizer")
+    with pytest.raises(ValueError, match="missing role_to_optimizer"):
+        bundle.load_state_dict(missing_mapping)
+
+    missing_main = bundle.state_dict()
+    missing_main.pop("main_optimizer")
+    with pytest.raises(ValueError, match="missing main_optimizer"):
+        bundle.load_state_dict(missing_main)
+
+    without_main = _make_state_test_bundle(with_main=False)
+    with pytest.raises(ValueError, match="main optimizer presence"):
+        bundle.load_state_dict(without_main.state_dict())
+    with pytest.raises(ValueError, match="main optimizer presence"):
+        without_main.load_state_dict(bundle.state_dict())
+
+
+def test_complete_optimizer_restore_requires_exact_role_optimizer_kinds() -> None:
+    bundle = _make_state_test_bundle()
+    valid_role_state = bundle.state_dict()["role_optimizers"]["muon"]
+
+    for role_states in ({}, {"muon": valid_role_state, "extra": valid_role_state}):
+        state = bundle.state_dict()
+        state["role_optimizers"] = role_states
+        with pytest.raises(ValueError, match="role optimizer kinds"):
+            bundle.load_state_dict(state)
+
+
+def test_rank_role_optimizer_restore_requires_exact_kinds() -> None:
+    bundle = _make_state_test_bundle()
+    valid_role_state = bundle.state_dict()["role_optimizers"]["muon"]
+
+    for role_states in ({}, {"muon": valid_role_state, "extra": valid_role_state}):
+        with pytest.raises(ValueError, match="role optimizer kinds"):
+            bundle.load_role_optimizer_states(role_states)
+
+
+def test_distributed_optimizer_restore_splits_common_and_rank_state() -> None:
+    saved_bundle = _make_state_test_bundle()
+    assert saved_bundle.main_optimizer is not None
+    _step_with_distinct_gradients(saved_bundle.main_optimizer)
+    _step_with_distinct_gradients(saved_bundle.role_optimizers["muon"])
+    full_state = saved_bundle.state_dict()
+    common_state = {**full_state, "role_optimizers": {}}
+
+    current_bundle = _make_state_test_bundle()
+    reordered_common_state = {
+        **common_state,
+        "role_to_optimizer": dict(reversed(common_state["role_to_optimizer"].items())),
+    }
+    with pytest.raises(ValueError, match="ordered role ownership"):
+        current_bundle.load_state_dict(reordered_common_state, load_role_optimizers=False)
+
+    current_bundle.load_state_dict(common_state, load_role_optimizers=False)
+    assert current_bundle.main_optimizer is not None
+    assert len(current_bundle.main_optimizer.state) == 1
+    assert not current_bundle.role_optimizers["muon"].state
+
+    current_bundle.load_role_optimizer_states(full_state["role_optimizers"])
+    assert len(current_bundle.role_optimizers["muon"].state) == 2
 
 
 def test_optimizer_factory_assigns_mixed_role_owners_once() -> None:

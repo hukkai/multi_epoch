@@ -15,7 +15,7 @@ from ortho_llm.config import ExperimentConfig, dump_config
 from ortho_llm.data import MemmapTokenDataset
 from ortho_llm.modeling import build_model
 from ortho_llm.optim import OptimBundle, build_optimizers, cosine_lr
-from ortho_llm.train.checkpoint import load_checkpoint, save_checkpoint
+from ortho_llm.train.checkpoint import load_checkpoint, rank_checkpoint_filename, save_checkpoint
 from ortho_llm.train.distributed import init_distributed, is_main_process
 from ortho_llm.train.evaluator import evaluate
 from ortho_llm.train.logging import JsonlLogger
@@ -107,24 +107,91 @@ def _write_manifest(output_dir: Path, config: ExperimentConfig, bundle: OptimBun
     path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
 
 
+def _reject_existing_fresh_metrics(metrics_path: Path, resume: str | None) -> None:
+    if not resume and metrics_path.exists():
+        raise FileExistsError(
+            f"Metrics file {metrics_path} already exists; choose a new train.output "
+            "or set train.resume to continue the existing run"
+        )
+
+
+def _validate_resume_metrics(metrics_path: Path, start_step: int) -> None:
+    if not metrics_path.exists():
+        return
+    lines = [line for line in metrics_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    if not lines:
+        return
+    try:
+        logged_steps = [int(json.loads(line)["step"]) for line in lines]
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise ValueError(f"Could not read logged steps from {metrics_path}") from exc
+    newest_step = max(logged_steps)
+    if newest_step > start_step:
+        raise ValueError(
+            f"Metrics file {metrics_path} already contains step {newest_step}, "
+            f"which is newer than resume checkpoint step {start_step}"
+        )
+
+
 def _load_resume(
     config: ExperimentConfig,
     model: torch.nn.Module,
     bundle: OptimBundle,
     dataset: MemmapTokenDataset,
-    device: torch.device,
+    *,
+    rank: int,
+    world_size: int,
 ) -> int:
     if not config.train.resume:
         return 0
-    state = load_checkpoint(config.train.resume, map_location=device)
+    # RNG state tensors are CPU state even for CUDA training.  Loading the
+    # checkpoint on CPU keeps them valid for torch.set_rng_state; model and
+    # optimizer loaders move tensor state to their parameter devices.
+    state = load_checkpoint(config.train.resume, map_location="cpu")
+    rank_state_files = state.get("rank_state_files")
+    if world_size > 1 and rank_state_files is None:
+        raise ValueError(
+            "Distributed resume requires per-rank checkpoint state; this checkpoint predates that format"
+        )
+    checkpoint_world_size = int(state.get("world_size", 1))
+    if checkpoint_world_size != world_size:
+        raise ValueError(
+            f"Checkpoint world size {checkpoint_world_size} does not match current world size {world_size}"
+        )
+
+    if "optimizers" not in state:
+        raise ValueError("Checkpoint is missing optimizer state required for resume")
+
     model.load_state_dict(state["model"])
-    if "optimizers" in state:
-        bundle.load_state_dict(state["optimizers"])
-    if "dataset" in state:
+    bundle.load_state_dict(
+        state["optimizers"],
+        load_role_optimizers=rank_state_files is None,
+    )
+    step = int(state.get("step", 0))
+
+    if rank_state_files is not None:
+        if not isinstance(rank_state_files, list) or len(rank_state_files) != world_size:
+            raise ValueError("Checkpoint rank_state_files does not match its world size")
+        rank_state_path = Path(config.train.resume).parent / rank_state_files[rank]
+        rank_state = load_checkpoint(rank_state_path, map_location="cpu")
+        if int(rank_state.get("rank", -1)) != rank:
+            raise ValueError(f"Rank checkpoint {rank_state_path} belongs to a different rank")
+        if int(rank_state.get("world_size", -1)) != world_size:
+            raise ValueError(f"Rank checkpoint {rank_state_path} has a different world size")
+        if int(rank_state.get("step", -1)) != step:
+            raise ValueError(f"Rank checkpoint {rank_state_path} has a different training step")
+        if "role_optimizers" not in rank_state:
+            raise ValueError(f"Rank checkpoint {rank_state_path} is missing role optimizer state")
+        bundle.load_role_optimizer_states(rank_state["role_optimizers"])
+        dataset.load_state_dict(rank_state["dataset"])
+        load_rng_state_dict(rank_state["rng"])
+    else:
+        if "dataset" not in state:
+            raise ValueError("Checkpoint is missing dataset state required for resume")
         dataset.load_state_dict(state["dataset"])
-    if "rng" in state:
-        load_rng_state_dict(state["rng"])
-    return int(state.get("step", 0))
+        if "rng" in state:
+            load_rng_state_dict(state["rng"])
+    return step
 
 
 def train(config: ExperimentConfig) -> None:
@@ -143,9 +210,10 @@ def train(config: ExperimentConfig) -> None:
         raise ValueError("Accumulation steps must be positive")
 
     output_dir = Path(config.train.output)
+    metrics_path = output_dir / config.logging.metrics_filename
+    _reject_existing_fresh_metrics(metrics_path, config.train.resume)
     if is_main_process():
         output_dir.mkdir(parents=True, exist_ok=True)
-        dump_config(config, output_dir / config.logging.resolved_config_filename)
 
     with torch.device(device):
         raw_model = build_model(config.model)
@@ -169,15 +237,25 @@ def train(config: ExperimentConfig) -> None:
         )
 
     bundle = build_optimizers(config, raw_model)
-    start_step = _load_resume(config, raw_model, bundle, dataset, device)
+    start_step = _load_resume(
+        config,
+        raw_model,
+        bundle,
+        dataset,
+        rank=rank,
+        world_size=world_size,
+    )
+    if config.train.resume:
+        _validate_resume_metrics(metrics_path, start_step)
 
     model: torch.nn.Module = raw_model
     if distributed:
         model = DDP(raw_model, device_ids=[local_rank] if device.type == "cuda" else None)
 
     if is_main_process():
+        dump_config(config, output_dir / config.logging.resolved_config_filename)
         _write_manifest(output_dir, config, bundle)
-    logger = JsonlLogger(output_dir / config.logging.metrics_filename) if is_main_process() else None
+    logger = JsonlLogger(metrics_path) if is_main_process() else None
 
     bundle.zero_grad(set_to_none=True)
     model.train()
@@ -234,12 +312,16 @@ def train(config: ExperimentConfig) -> None:
 
         completed_step = step + 1
         val_metrics: dict[str, float | int | None] = {"val_loss": None, "val_ppl": None, "val_batches": 0}
-        if (
+        eval_configured = (
             val_dataset is not None
             and config.train.eval_interval > 0
             and config.train.eval_batches > 0
-            and completed_step % config.train.eval_interval == 0
-        ):
+        )
+        eval_due = eval_configured and (
+            completed_step % config.train.eval_interval == 0
+            or completed_step == config.train.num_steps
+        )
+        if eval_due:
             val_metrics = evaluate(model, val_dataset, num_batches=config.train.eval_batches, device=device)
 
         if is_main_process() and (
@@ -247,10 +329,12 @@ def train(config: ExperimentConfig) -> None:
             or completed_step == 1
             or completed_step == config.train.num_steps
             or is_strict_step
+            or eval_due
         ):
             elapsed = max(time.time() - start_time, 1e-6)
             tokens_seen = completed_step * config.train.global_batch_size * config.train.seq_length
-            tokens_per_second = tokens_seen / elapsed
+            session_tokens = (completed_step - start_step) * config.train.global_batch_size * config.train.seq_length
+            tokens_per_second = session_tokens / elapsed
             row: dict[str, Any] = {
                 "step": completed_step,
                 "tokens_consumed": tokens_seen,
@@ -278,24 +362,54 @@ def train(config: ExperimentConfig) -> None:
             )
             loss_meter.reset()
 
-        if is_main_process() and config.checkpoint.enabled and (
+        save_due = config.checkpoint.enabled and (
             completed_step % config.train.save_freq == 0 or completed_step == config.train.num_steps
-        ):
+        )
+        if save_due:
             filename = config.checkpoint.filename_template.format(step=completed_step)
-            save_checkpoint(
-                {
+            rank_state_files = [rank_checkpoint_filename(filename, item) for item in range(world_size)]
+
+            if distributed:
+                role_optimizer_states = {
+                    name: optimizer.state_dict()
+                    for name, optimizer in bundle.role_optimizers.items()
+                }
+                save_checkpoint(
+                    {
+                        "rank": rank,
+                        "world_size": world_size,
+                        "step": completed_step,
+                        "role_optimizers": role_optimizer_states,
+                        "dataset": dataset.state_dict(),
+                        "rng": rng_state_dict(),
+                    },
+                    output_dir,
+                    rank_state_files[rank],
+                )
+                dist.barrier()
+
+            if is_main_process():
+                optimizer_state = bundle.state_dict()
+                if distributed:
+                    optimizer_state["role_optimizers"] = {}
+                checkpoint_state: dict[str, Any] = {
                     "model": module.state_dict(),
-                    "optimizers": bundle.state_dict(),
-                    "dataset": dataset.state_dict(),
-                    "rng": rng_state_dict(),
+                    "optimizers": optimizer_state,
                     "step": completed_step,
+                    "world_size": world_size,
                     "tokens_consumed": completed_step * config.train.global_batch_size * config.train.seq_length,
                     "config": config.to_dict(),
                     "role_to_optimizer": bundle.role_to_optimizer,
-                },
-                output_dir,
-                filename,
-            )
+                }
+                if distributed:
+                    checkpoint_state["rank_state_files"] = rank_state_files
+                else:
+                    checkpoint_state["dataset"] = dataset.state_dict()
+                    checkpoint_state["rng"] = rng_state_dict()
+                save_checkpoint(checkpoint_state, output_dir, filename)
+
+            if distributed:
+                dist.barrier()
 
     if distributed:
         dist.destroy_process_group()
