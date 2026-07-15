@@ -8,7 +8,93 @@ import torch.distributed as dist
 
 from .muon import orthogonalize_newton_schulz
 from .ops import polar
-from .stiefel_update import stiefel_update_taylor
+from .stiefel_update import stiefel_project, stiefel_update_taylor
+
+_SPECTRAL_NORM_FIRST_ITERS = 20
+_SPECTRAL_NORM_WARM_ITERS = 3
+_SPECTRAL_NORM_SAFETY_FACTOR = 1.01
+
+
+@torch.no_grad()
+def spectral_norm(
+    x: torch.Tensor,
+    cached_u: torch.Tensor | None = None,
+    n_iter: int = 10,
+    eps: float = 1e-7,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Approximate the largest singular value of each matrix in x.
+
+    Args:
+        x: Tensor of shape [B, m, n].
+        cached_u: Optional left singular-vector estimates from a previous call.
+        n_iter: Number of power iterations.
+        eps: Numerical stability constant.
+
+    Returns:
+        Spectral norm estimates of shape [B] and updated left singular-vector
+        estimates, both returned in float32.
+    """
+    if x.ndim != 3:
+        raise ValueError(f"x must have shape [B, m, n], got {tuple(x.shape)}")
+    if n_iter < 1:
+        raise ValueError(f"n_iter must be >= 1, got {n_iter}")
+
+    batch, m, n = x.shape
+
+    # Use the orientation with fewer rows, reducing the size of u.
+    work = x if m <= n else x.transpose(-2, -1)
+    work = work.to(torch.bfloat16 if x.device.type == "cuda" else torch.float32)
+    expected_u_shape = (batch, work.shape[-2], 1)
+
+    if cached_u is not None:
+        if tuple(cached_u.shape) != expected_u_shape:
+            raise ValueError(
+                f"cached_u must have shape {expected_u_shape}, got {tuple(cached_u.shape)}"
+            )
+        u = cached_u.to(device=x.device, dtype=torch.float32)
+    else:
+        u = torch.randn(
+            batch,
+            work.shape[-2],
+            1,
+            device=x.device,
+            dtype=torch.float32,
+        )
+
+    u_norm = torch.linalg.vector_norm(u, dim=-2, keepdim=True)
+    u = torch.where(
+        u_norm > eps,
+        u / u_norm,
+        torch.full_like(u, u.shape[-2] ** -0.5),
+    )
+
+    for _ in range(n_iter):
+        if x.device.type == "cuda":
+            v = torch.bmm(
+                work.transpose(-2, -1),
+                u.to(torch.bfloat16),
+                out_dtype=torch.float32,
+            )
+        else:
+            v = torch.bmm(work.transpose(-2, -1), u)
+        v = v / torch.linalg.vector_norm(v, dim=-2, keepdim=True).clamp_min(eps)
+
+        if x.device.type == "cuda":
+            z = torch.bmm(
+                work,
+                v.to(torch.bfloat16),
+                out_dtype=torch.float32,
+            )
+        else:
+            z = torch.bmm(work, v)
+        sigma = torch.linalg.vector_norm(z, dim=-2, keepdim=True)
+        next_u = z / sigma.clamp_min(eps)
+        # Preserve a valid direction for zero matrices so a later non-zero
+        # update can still use this vector as a warm start.
+        u = torch.where(sigma > eps, next_u, u)
+
+    return sigma.flatten(), u.float()
 
 
 class OrthMuon(torch.optim.Optimizer):
@@ -114,7 +200,7 @@ class OrthMuon(torch.optim.Optimizer):
                 grad = param.grad[local_slice].detach().float()
 
                 state = self.state[param]
-                if len(state) == 0:
+                if "momentum_buffer" not in state:
                     state["momentum_buffer"] = torch.zeros_like(param_slice, dtype=torch.float32)
 
                 buffer = state["momentum_buffer"]
@@ -128,11 +214,27 @@ class OrthMuon(torch.optim.Optimizer):
                 scale = 0.2 * math.sqrt(max(rows, cols))
 
                 x = param_slice.float().reshape(-1, submat_dim, cols)
+
+                update = stiefel_project(x, update.reshape_as(x))
+                update = update.reshape_as(grad)
+                cached_u = state.get("spectral_norm_u")
+                n_iter = (
+                    _SPECTRAL_NORM_FIRST_ITERS
+                    if cached_u is None
+                    else _SPECTRAL_NORM_WARM_ITERS
+                )
+                norm_estimate, cached_u = spectral_norm(
+                    update,
+                    cached_u=cached_u,
+                    n_iter=n_iter,
+                )
+                state["spectral_norm_u"] = cached_u
+                clip_scale = (_SPECTRAL_NORM_SAFETY_FACTOR * norm_estimate).clamp_min(1.0)
+                update.div_(clip_scale.view(-1, 1, 1))
                 update = update.reshape_as(x)
 
-                eta = lr * scale
-                update.mul_(-eta)
-                new_x = stiefel_update_taylor(x, update)
+                update.mul_(-lr * scale)
+                new_x = stiefel_update_taylor(x, update, do_projection=False)
 
                 if is_last and strict_stiefel:
                     new_x = polar(new_x)

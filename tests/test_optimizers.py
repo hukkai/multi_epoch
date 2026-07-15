@@ -6,6 +6,7 @@ import torch
 from ortho_llm.config import config_from_dict
 from ortho_llm.modeling import build_model
 from ortho_llm.optim import Muon, OptimBundle, OrthAdam, OrthMuon, build_optimizers
+from ortho_llm.optim.orth_muon import spectral_norm
 from ortho_llm.optim.stiefel_update import (
     _COEFFS2,
     _COEFFS3,
@@ -261,6 +262,129 @@ def test_muon_optimizers_preserve_shape() -> None:
         opt = optimizer_cls([param], lr=0.01, **kwargs)
         opt.step(is_last=True) if optimizer_cls is OrthMuon else opt.step()
         assert tuple(param.shape) == (4, 8, 8)
+
+
+@pytest.mark.parametrize("shape", ((4, 4), (3, 7), (7, 3)))
+def test_spectral_norm_power_iteration_matches_exact_norm(shape: tuple[int, int]) -> None:
+    matrices = torch.zeros(2, *shape)
+    matrices[0, 0, 0] = 4.0
+    matrices[0, 1, 1] = 1.0
+    matrices[1, 0, 0] = 2.5
+    matrices[1, 1, 1] = 0.5
+
+    torch.manual_seed(0)
+    actual, cached_u = spectral_norm(matrices, n_iter=20)
+    expected = torch.linalg.matrix_norm(matrices, ord=2, dim=(-2, -1))
+
+    torch.testing.assert_close(actual, expected, rtol=1e-5, atol=1e-6)
+    assert cached_u.shape == (matrices.shape[0], min(shape), 1)
+    assert cached_u.dtype == torch.float32
+
+
+def test_spectral_norm_zero_matrix_preserves_a_usable_cached_direction() -> None:
+    matrices = torch.zeros(2, 5, 3)
+
+    torch.manual_seed(0)
+    estimates, cached_u = spectral_norm(matrices, n_iter=20)
+
+    torch.testing.assert_close(estimates, torch.zeros_like(estimates))
+    torch.testing.assert_close(
+        torch.linalg.vector_norm(cached_u, dim=-2),
+        torch.ones(2, 1),
+    )
+    assert torch.isfinite(cached_u).all()
+
+    matrices[:, 0, 0] = 2.0
+    estimates, cached_u = spectral_norm(matrices, cached_u=cached_u, n_iter=3)
+    torch.testing.assert_close(estimates, torch.full((2,), 2.0))
+    assert torch.isfinite(cached_u).all()
+
+
+def test_orth_muon_clips_projected_update_and_reuses_cached_power_vector(monkeypatch) -> None:
+    calls: list[tuple[int, torch.Tensor | None]] = []
+    applied_updates: list[torch.Tensor] = []
+
+    def fake_spectral_norm(
+        update: torch.Tensor,
+        cached_u: torch.Tensor | None = None,
+        n_iter: int = 10,
+        eps: float = 1e-7,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        del eps
+        assert update.shape == (2, 4, 3)
+        calls.append((n_iter, None if cached_u is None else cached_u.clone()))
+        estimates = torch.tensor([2.0, 0.5], device=update.device)
+        next_u = torch.full(
+            (update.shape[0], min(update.shape[-2:]), 1),
+            float(len(calls)),
+            device=update.device,
+        )
+        return estimates, next_u
+
+    def capture_stiefel_update(
+        x: torch.Tensor,
+        update: torch.Tensor,
+        **kwargs,
+    ) -> torch.Tensor:
+        assert kwargs == {"do_projection": False}
+        applied_updates.append(update.clone())
+        return x
+
+    monkeypatch.setattr(
+        "ortho_llm.optim.orth_muon.orthogonalize_newton_schulz",
+        lambda update, **_kwargs: torch.ones_like(update),
+    )
+    monkeypatch.setattr(
+        "ortho_llm.optim.orth_muon.stiefel_project",
+        lambda _x, update: update,
+    )
+    monkeypatch.setattr("ortho_llm.optim.orth_muon.spectral_norm", fake_spectral_norm)
+    monkeypatch.setattr(
+        "ortho_llm.optim.orth_muon.stiefel_update_taylor",
+        capture_stiefel_update,
+    )
+
+    param = torch.nn.Parameter(torch.zeros(2, 4, 3))
+    optimizer = OrthMuon(
+        param,
+        lr=1.0,
+        momentum=0.0,
+        nesterov=False,
+        ns_steps=0,
+        submat_dim=2,
+    )
+
+    param.grad = torch.ones_like(param)
+    optimizer.step()
+    param.grad = torch.ones_like(param)
+    optimizer.step()
+
+    assert [n_iter for n_iter, _ in calls] == [20, 3]
+    assert calls[0][1] is None
+    torch.testing.assert_close(calls[1][1], torch.ones(2, 3, 1))
+
+    step_scale = 0.2 * 4**0.5
+    expected_update = torch.full((4, 2, 3), -step_scale)
+    expected_update[:2].div_(2.0 * 1.01)
+    torch.testing.assert_close(applied_updates[0], expected_update)
+    torch.testing.assert_close(applied_updates[1], expected_update)
+
+    restored_param = torch.nn.Parameter(torch.zeros_like(param))
+    restored_optimizer = OrthMuon(
+        restored_param,
+        lr=1.0,
+        momentum=0.0,
+        nesterov=False,
+        ns_steps=0,
+        submat_dim=2,
+    )
+    restored_optimizer.load_state_dict(optimizer.state_dict())
+    restored_param.grad = torch.ones_like(restored_param)
+    restored_optimizer.step()
+
+    assert calls[-1][0] == 3
+    torch.testing.assert_close(calls[-1][1], torch.full((2, 3, 1), 2.0))
+    assert "spectral_norm_u" in restored_optimizer.state[restored_param]
 
 
 def test_stiefel_horner_series_matches_sequential_reference() -> None:
