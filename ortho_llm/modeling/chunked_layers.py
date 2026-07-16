@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -20,64 +22,9 @@ from ortho_llm.modeling.llama import (
 from ortho_llm.modeling.registry import MatrixSpec, ParameterRegistry
 
 
-def _compile_chunk_affine_enabled() -> bool:
-    return True
-
-
-def mul_add_broadcast_eager(
-    orth_weight: torch.Tensor,
-    affine1: torch.Tensor,
-    affine2: torch.Tensor,
-) -> torch.Tensor:
-    return orth_weight * (affine1 + affine2 + 1.0)
-
-
-def custom_forward_eager(
-    x: torch.Tensor,
-    affine1: torch.Tensor,
-    affine2: torch.Tensor
-) -> torch.Tensor:
-    return x * (affine1 + affine2 + 1.0)
-
-
-def custom_backward_eager(
-    x: torch.Tensor,
-    affine1: torch.Tensor,
-    affine2: torch.Tensor,
-    grad_out: torch.Tensor
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    scale = affine1 + affine2 + 1.0
-    grad_X = grad_out * scale
-    grad_a1 = (grad_out * x).sum(dim=-1, keepdim=True)
-    grad_a2 = (grad_out * x).sum(dim=-2, keepdim=True)
-    return grad_X, grad_a1, grad_a2
-
-
-custom_forward = torch.compile(custom_forward_eager, fullgraph=True)
-custom_backward = torch.compile(custom_backward_eager, fullgraph=True)
-
-
-class MulAddBroadcast(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, X, a1, a2):
-        ctx.save_for_backward(X, a1, a2)
-        if X.device.type != "cuda":
-            return custom_forward_eager(X, a1, a2)
-        return custom_forward(X, a1, a2)
-
-    @staticmethod
-    def backward(ctx, grad_out):
-        X, a1, a2 = ctx.saved_tensors
-        if grad_out.device.type != "cuda":
-            return custom_backward_eager(X, a1, a2, grad_out)
-        grad_X, grad_a1, grad_a2 = custom_backward(X, a1, a2, grad_out)
-        return grad_X, grad_a1, grad_a2
-
-
-if _compile_chunk_affine_enabled():
-    mul_add_broadcast = MulAddBroadcast.apply
-else:
-    mul_add_broadcast = mul_add_broadcast_eager
+@dataclass(frozen=True)
+class RoleLayerViews:
+    weights: dict[str, tuple[torch.Tensor, ...]]
 
 
 def _stiefel_block_init_3d(param: nn.Parameter, submat_dim: int) -> None:
@@ -105,8 +52,6 @@ class RoleChunkBank(nn.Module):
         self.kv_hidden_size = self.num_kv_heads * self.head_dim
         self.enabled_roles = tuple(config.enabled_roles)
         self.weights = nn.ParameterDict()
-        self.affine1 = nn.ParameterDict()
-        self.affine2 = nn.ParameterDict()
 
         for role in self.enabled_roles:
             safe_name = ROLE_TO_SAFE_NAME[role]
@@ -114,9 +59,6 @@ class RoleChunkBank(nn.Module):
             weight = nn.Parameter(torch.empty(config.num_layers, rows, config.hidden_size))
             nn.init.normal_(weight, mean=0.0, std=config.hidden_size**-0.5)
             self.weights[safe_name] = weight
-            if config.chunk_affine:
-                self.affine1[safe_name] = nn.Parameter(torch.zeros(config.num_layers, rows, 1))
-                self.affine2[safe_name] = nn.Parameter(torch.zeros(config.num_layers, 1, config.hidden_size))
 
         self._init_role_weights()
         self.registry = self._build_registry()
@@ -140,22 +82,36 @@ class RoleChunkBank(nn.Module):
             return self.intermediate_size
         raise ValueError(f"Unsupported role {role!r}")
 
-    def _role_weight(self, role: str, layer_idx: int) -> torch.Tensor:
-        safe_name = ROLE_TO_SAFE_NAME[role]
-        weight = self.weights[safe_name][layer_idx]
-        if not self.config.chunk_affine:
-            return weight
-        return mul_add_broadcast(
-            weight,
-            self.affine1[safe_name][layer_idx],
-            self.affine2[safe_name][layer_idx],
-        )
+    def layer_views(self) -> RoleLayerViews:
+        weights: dict[str, tuple[torch.Tensor, ...]] = {}
+        for role in self.enabled_roles:
+            safe_name = ROLE_TO_SAFE_NAME[role]
+            weights[role] = tuple(self.weights[safe_name].unbind(0))
+        return RoleLayerViews(weights=weights)
 
-    def attention_weight(self, role: str, layer_idx: int) -> torch.Tensor:
-        return self._role_weight(role, layer_idx)
+    def _role_weight(
+        self,
+        role: str,
+        layer_idx: int,
+        layer_views: RoleLayerViews,
+    ) -> torch.Tensor:
+        return layer_views.weights[role][layer_idx]
 
-    def mlp_weight(self, role: str, layer_idx: int) -> torch.Tensor:
-        return self._role_weight(role, layer_idx)
+    def attention_weight(
+        self,
+        role: str,
+        layer_idx: int,
+        layer_views: RoleLayerViews,
+    ) -> torch.Tensor:
+        return self._role_weight(role, layer_idx, layer_views)
+
+    def mlp_weight(
+        self,
+        role: str,
+        layer_idx: int,
+        layer_views: RoleLayerViews,
+    ) -> torch.Tensor:
+        return self._role_weight(role, layer_idx, layer_views)
 
     def role_parameters(self) -> dict[str, nn.Parameter]:
         return {role: self.weights[ROLE_TO_SAFE_NAME[role]] for role in self.enabled_roles}
@@ -216,9 +172,17 @@ class HybridAttention(nn.Module):
             if role in enabled_roles:
                 delattr(self.dense, attr)
 
-    def _linear(self, x: torch.Tensor, role: str, attr: str, bank: RoleChunkBank, layer_idx: int) -> torch.Tensor:
+    def _linear(
+        self,
+        x: torch.Tensor,
+        role: str,
+        attr: str,
+        bank: RoleChunkBank,
+        layer_idx: int,
+        layer_views: RoleLayerViews,
+    ) -> torch.Tensor:
         if role in self.enabled_roles:
-            return F.linear(x, bank.attention_weight(role, layer_idx))
+            return F.linear(x, bank.attention_weight(role, layer_idx, layer_views))
         return getattr(self.dense, attr)(x)
 
     def forward(
@@ -228,11 +192,12 @@ class HybridAttention(nn.Module):
         layer_idx: int,
         cos: torch.Tensor,
         sin: torch.Tensor,
+        layer_views: RoleLayerViews,
     ) -> torch.Tensor:
         batch_size, seq_len, _ = x.shape
-        q = self._linear(x, "attn.q", "q_proj", bank, layer_idx)
-        k = self._linear(x, "attn.k", "k_proj", bank, layer_idx)
-        v = self._linear(x, "attn.v", "v_proj", bank, layer_idx)
+        q = self._linear(x, "attn.q", "q_proj", bank, layer_idx, layer_views)
+        k = self._linear(x, "attn.k", "k_proj", bank, layer_idx, layer_views)
+        v = self._linear(x, "attn.v", "v_proj", bank, layer_idx, layer_views)
         q = q.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
         k = k.view(batch_size, seq_len, self.num_kv_heads, self.head_dim).transpose(1, 2)
         v = v.view(batch_size, seq_len, self.num_kv_heads, self.head_dim).transpose(1, 2)
@@ -247,7 +212,7 @@ class HybridAttention(nn.Module):
             enable_gqa=self.num_kv_heads != self.num_heads,
         )
         attn_output = attn_output.transpose(1, 2).contiguous().view(batch_size, seq_len, self.hidden_size)
-        return self._linear(attn_output, "attn.o", "o_proj", bank, layer_idx)
+        return self._linear(attn_output, "attn.o", "o_proj", bank, layer_idx, layer_views)
 
 
 class HybridMLP(nn.Module):
@@ -265,20 +230,40 @@ class HybridMLP(nn.Module):
             if role in enabled_roles:
                 delattr(self.dense, attr)
 
-    def _in_proj(self, x: torch.Tensor, role: str, attr: str, bank: RoleChunkBank, layer_idx: int) -> torch.Tensor:
+    def _in_proj(
+        self,
+        x: torch.Tensor,
+        role: str,
+        attr: str,
+        bank: RoleChunkBank,
+        layer_idx: int,
+        layer_views: RoleLayerViews,
+    ) -> torch.Tensor:
         if role in self.enabled_roles:
-            return F.linear(x, bank.mlp_weight(role, layer_idx))
+            return F.linear(x, bank.mlp_weight(role, layer_idx, layer_views))
         return getattr(self.dense, attr)(x)
 
-    def _down_proj(self, x: torch.Tensor, bank: RoleChunkBank, layer_idx: int) -> torch.Tensor:
+    def _down_proj(
+        self,
+        x: torch.Tensor,
+        bank: RoleChunkBank,
+        layer_idx: int,
+        layer_views: RoleLayerViews,
+    ) -> torch.Tensor:
         if "mlp.down" in self.enabled_roles:
-            return F.linear(x, bank.mlp_weight("mlp.down", layer_idx).T)
+            return F.linear(x, bank.mlp_weight("mlp.down", layer_idx, layer_views).T)
         return self.dense.down_proj(x)
 
-    def forward(self, x: torch.Tensor, bank: RoleChunkBank, layer_idx: int) -> torch.Tensor:
-        gated = F.silu(self._in_proj(x, "mlp.gate", "gate_proj", bank, layer_idx))
-        up = self._in_proj(x, "mlp.up", "up_proj", bank, layer_idx)
-        return self._down_proj(gated * up, bank, layer_idx)
+    def forward(
+        self,
+        x: torch.Tensor,
+        bank: RoleChunkBank,
+        layer_idx: int,
+        layer_views: RoleLayerViews,
+    ) -> torch.Tensor:
+        gated = F.silu(self._in_proj(x, "mlp.gate", "gate_proj", bank, layer_idx, layer_views))
+        up = self._in_proj(x, "mlp.up", "up_proj", bank, layer_idx, layer_views)
+        return self._down_proj(gated * up, bank, layer_idx, layer_views)
 
 
 class HybridBlock(nn.Module):
@@ -290,9 +275,16 @@ class HybridBlock(nn.Module):
         self.post_attention_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.mlp = HybridMLP(config, enabled_roles)
 
-    def forward(self, x: torch.Tensor, bank: RoleChunkBank, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
-        x = x + self.self_attn(self.input_layernorm(x), bank, self.layer_idx, cos, sin)
-        x = x + self.mlp(self.post_attention_layernorm(x), bank, self.layer_idx)
+    def forward(
+        self,
+        x: torch.Tensor,
+        bank: RoleChunkBank,
+        cos: torch.Tensor,
+        sin: torch.Tensor,
+        layer_views: RoleLayerViews,
+    ) -> torch.Tensor:
+        x = x + self.self_attn(self.input_layernorm(x), bank, self.layer_idx, cos, sin, layer_views)
+        x = x + self.mlp(self.post_attention_layernorm(x), bank, self.layer_idx, layer_views)
         return x
 
 
@@ -341,9 +333,10 @@ class RoleChunkedLlamaForCausalLM(nn.Module):
             raise ValueError("Sequence length exceeds max_position_embeddings")
         x = self.embed_tokens(input_ids)
         cos, sin = self.rotary_emb(x.shape[1], device=x.device, dtype=x.dtype)
+        layer_views = self.chunk_bank.layer_views()
 
         for layer in self.layers:
-            x = layer(x, self.chunk_bank, cos, sin)
+            x = layer(x, self.chunk_bank, cos, sin, layer_views)
 
         x = self.norm(x)
         logits = self.lm_head(x)

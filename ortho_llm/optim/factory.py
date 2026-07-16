@@ -37,12 +37,63 @@ class OptimBundle:
             "role_to_optimizer": dict(self.role_to_optimizer),
         }
 
-    def load_state_dict(self, state: dict) -> None:
-        if self.main_optimizer is not None and state.get("main_optimizer") is not None:
+    def _validate_role_to_optimizer(self, state: dict) -> None:
+        if "role_to_optimizer" not in state:
+            raise ValueError("Optimizer state is missing role_to_optimizer")
+        saved_mapping = state["role_to_optimizer"]
+        if not isinstance(saved_mapping, dict):
+            raise ValueError("Optimizer role_to_optimizer must be a mapping")
+        if list(saved_mapping.items()) != list(self.role_to_optimizer.items()):
+            raise ValueError(
+                "Saved role_to_optimizer does not match the current ordered role ownership"
+            )
+
+    def _validate_main_optimizer(self, state: dict) -> None:
+        if "main_optimizer" not in state:
+            raise ValueError("Optimizer state is missing main_optimizer")
+        saved_has_main = state["main_optimizer"] is not None
+        current_has_main = self.main_optimizer is not None
+        if saved_has_main != current_has_main:
+            raise ValueError(
+                "Saved main optimizer presence does not match the current optimizer bundle"
+            )
+
+    def _validate_role_optimizer_states(self, states: dict) -> None:
+        if not isinstance(states, dict):
+            raise ValueError("Role optimizer states must be a mapping")
+        saved_kinds = set(states)
+        current_kinds = set(self.role_optimizers)
+        if saved_kinds != current_kinds:
+            missing = sorted(current_kinds - saved_kinds)
+            unexpected = sorted(saved_kinds - current_kinds)
+            raise ValueError(
+                "Saved role optimizer kinds do not match the current optimizer bundle "
+                f"(missing={missing}, unexpected={unexpected})"
+            )
+
+    def load_role_optimizer_states(self, states: dict) -> None:
+        """Load a complete set of rank-local role optimizer states."""
+        self._validate_role_optimizer_states(states)
+        for kind, optimizer in self.role_optimizers.items():
+            optimizer.load_state_dict(states[kind])
+
+    def load_state_dict(self, state: dict, *, load_role_optimizers: bool = True) -> None:
+        """Load a full state, or only common state when role payloads are rank-local."""
+        self._validate_role_to_optimizer(state)
+        self._validate_main_optimizer(state)
+
+        role_optimizer_states = None
+        if load_role_optimizers:
+            if "role_optimizers" not in state:
+                raise ValueError("Optimizer state is missing role_optimizers")
+            role_optimizer_states = state["role_optimizers"]
+            self._validate_role_optimizer_states(role_optimizer_states)
+
+        if self.main_optimizer is not None:
             self.main_optimizer.load_state_dict(state["main_optimizer"])
-        for name, optimizer_state in state.get("role_optimizers", {}).items():
-            if name in self.role_optimizers:
-                self.role_optimizers[name].load_state_dict(optimizer_state)
+        if role_optimizer_states is not None:
+            for kind, optimizer in self.role_optimizers.items():
+                optimizer.load_state_dict(role_optimizer_states[kind])
 
 
 def resolve_role_owners(config: ExperimentConfig, registry: ParameterRegistry | None) -> dict[str, str]:

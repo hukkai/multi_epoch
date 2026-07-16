@@ -42,7 +42,6 @@ class ModelConfig:
     tie_word_embeddings: bool = False
     parameterization: str = "dense"
     enabled_roles: list[str] = field(default_factory=list)
-    chunk_affine: bool = True
     init: str = "qr"
     num_kv_heads: int | None = None
     row_block_size: int | None = None
@@ -363,6 +362,7 @@ def load_config(config_path: str | Path, overrides: list[str] | tuple[str, ...] 
 
 def dump_config(config: ExperimentConfig, path: str | Path) -> None:
     output = config.to_dict()
+    output.pop("config_path", None)
     Path(path).write_text(yaml.safe_dump(output, sort_keys=False), encoding="utf-8")
 
 

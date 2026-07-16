@@ -22,14 +22,19 @@ python data/generate_val_tokens_1m.py --output-dir data/C4-val-1M --overwrite
 All training goes through the package entrypoint:
 
 ```bash
-python -m ortho_llm.scripts.train --config configs/360m_2048l/dense_adamw_360m_2048l.yaml
+python -m ortho_llm.scripts.train --config configs/360m_4096l/base/adamw_360m_4096l.yaml
 ```
 
 Multi-process runs use the same entrypoint:
 
 ```bash
-bash run.sh configs/360m_2048l/orth_muon_360m_2048l.yaml
+bash run.sh configs/360m_4096l/sweeps/orth_muon_lr/orth_muon_lr0p002.yaml
 ```
+
+Distributed checkpoints keep the shared model state in `checkpoint_*.pth` and
+rank-local optimizer, dataset, and RNG state under `rank_states/`. Keep both
+together when moving a checkpoint. Fresh runs refuse to append to an existing
+metrics file; set `train.resume` to continue a run or choose a new output path.
 
 The 360M 2x-Chinchilla configs are organized by context length under
 `configs/`; see `RUN.md` for the runnable command list.

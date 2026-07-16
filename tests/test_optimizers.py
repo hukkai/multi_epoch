@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import pytest
 import torch
 
 from ortho_llm.config import config_from_dict
 from ortho_llm.modeling import build_model
-from ortho_llm.optim import Muon, OrthAdam, OrthMuon, build_optimizers
+from ortho_llm.optim import Muon, OptimBundle, OrthAdam, OrthMuon, build_optimizers
+from ortho_llm.optim.orth_muon import spectral_norm
 from ortho_llm.optim.stiefel_update import (
     _COEFFS2,
     _COEFFS3,
@@ -26,6 +28,107 @@ def _apply_series_reference(
         term = gram_error @ term
         q = q + coeff * term
     return q
+
+
+def _make_state_test_bundle(
+    *,
+    with_main: bool = True,
+    role_order: tuple[str, ...] = ("attn.q", "attn.o"),
+) -> OptimBundle:
+    role_params = [torch.nn.Parameter(torch.zeros(2, 2)) for _ in role_order]
+    main_optimizer = None
+    if with_main:
+        main_optimizer = torch.optim.SGD(
+            [torch.nn.Parameter(torch.zeros(2, 2))],
+            lr=0.1,
+            momentum=0.9,
+        )
+    return OptimBundle(
+        main_optimizer=main_optimizer,
+        role_optimizers={
+            "muon": torch.optim.SGD(role_params, lr=0.1, momentum=0.9),
+        },
+        role_to_optimizer={role: "muon" for role in role_order},
+    )
+
+
+def _step_with_distinct_gradients(optimizer: torch.optim.Optimizer) -> None:
+    for value, param in enumerate(optimizer.param_groups[0]["params"], start=1):
+        param.grad = torch.full_like(param, float(value))
+    optimizer.step()
+
+
+def test_optimizer_restore_rejects_reordered_same_shaped_roles() -> None:
+    saved_bundle = _make_state_test_bundle(role_order=("attn.q", "attn.o"))
+    _step_with_distinct_gradients(saved_bundle.role_optimizers["muon"])
+    current_bundle = _make_state_test_bundle(role_order=("attn.o", "attn.q"))
+
+    with pytest.raises(ValueError, match="ordered role ownership"):
+        current_bundle.load_state_dict(saved_bundle.state_dict())
+
+
+def test_optimizer_restore_requires_role_mapping_and_main_presence() -> None:
+    bundle = _make_state_test_bundle()
+    missing_mapping = bundle.state_dict()
+    missing_mapping.pop("role_to_optimizer")
+    with pytest.raises(ValueError, match="missing role_to_optimizer"):
+        bundle.load_state_dict(missing_mapping)
+
+    missing_main = bundle.state_dict()
+    missing_main.pop("main_optimizer")
+    with pytest.raises(ValueError, match="missing main_optimizer"):
+        bundle.load_state_dict(missing_main)
+
+    without_main = _make_state_test_bundle(with_main=False)
+    with pytest.raises(ValueError, match="main optimizer presence"):
+        bundle.load_state_dict(without_main.state_dict())
+    with pytest.raises(ValueError, match="main optimizer presence"):
+        without_main.load_state_dict(bundle.state_dict())
+
+
+def test_complete_optimizer_restore_requires_exact_role_optimizer_kinds() -> None:
+    bundle = _make_state_test_bundle()
+    valid_role_state = bundle.state_dict()["role_optimizers"]["muon"]
+
+    for role_states in ({}, {"muon": valid_role_state, "extra": valid_role_state}):
+        state = bundle.state_dict()
+        state["role_optimizers"] = role_states
+        with pytest.raises(ValueError, match="role optimizer kinds"):
+            bundle.load_state_dict(state)
+
+
+def test_rank_role_optimizer_restore_requires_exact_kinds() -> None:
+    bundle = _make_state_test_bundle()
+    valid_role_state = bundle.state_dict()["role_optimizers"]["muon"]
+
+    for role_states in ({}, {"muon": valid_role_state, "extra": valid_role_state}):
+        with pytest.raises(ValueError, match="role optimizer kinds"):
+            bundle.load_role_optimizer_states(role_states)
+
+
+def test_distributed_optimizer_restore_splits_common_and_rank_state() -> None:
+    saved_bundle = _make_state_test_bundle()
+    assert saved_bundle.main_optimizer is not None
+    _step_with_distinct_gradients(saved_bundle.main_optimizer)
+    _step_with_distinct_gradients(saved_bundle.role_optimizers["muon"])
+    full_state = saved_bundle.state_dict()
+    common_state = {**full_state, "role_optimizers": {}}
+
+    current_bundle = _make_state_test_bundle()
+    reordered_common_state = {
+        **common_state,
+        "role_to_optimizer": dict(reversed(common_state["role_to_optimizer"].items())),
+    }
+    with pytest.raises(ValueError, match="ordered role ownership"):
+        current_bundle.load_state_dict(reordered_common_state, load_role_optimizers=False)
+
+    current_bundle.load_state_dict(common_state, load_role_optimizers=False)
+    assert current_bundle.main_optimizer is not None
+    assert len(current_bundle.main_optimizer.state) == 1
+    assert not current_bundle.role_optimizers["muon"].state
+
+    current_bundle.load_role_optimizer_states(full_state["role_optimizers"])
+    assert len(current_bundle.role_optimizers["muon"].state) == 2
 
 
 def test_optimizer_factory_assigns_mixed_role_owners_once() -> None:
@@ -201,6 +304,129 @@ def test_muon_optimizers_preserve_shape() -> None:
         opt = optimizer_cls([param], lr=0.01, **kwargs)
         opt.step(is_last=True) if optimizer_cls is OrthMuon else opt.step()
         assert tuple(param.shape) == (4, 8, 8)
+
+
+@pytest.mark.parametrize("shape", ((4, 4), (3, 7), (7, 3)))
+def test_spectral_norm_power_iteration_matches_exact_norm(shape: tuple[int, int]) -> None:
+    matrices = torch.zeros(2, *shape)
+    matrices[0, 0, 0] = 4.0
+    matrices[0, 1, 1] = 1.0
+    matrices[1, 0, 0] = 2.5
+    matrices[1, 1, 1] = 0.5
+
+    torch.manual_seed(0)
+    actual, cached_u = spectral_norm(matrices, n_iter=20)
+    expected = torch.linalg.matrix_norm(matrices, ord=2, dim=(-2, -1))
+
+    torch.testing.assert_close(actual, expected, rtol=1e-5, atol=1e-6)
+    assert cached_u.shape == (matrices.shape[0], min(shape), 1)
+    assert cached_u.dtype == torch.float32
+
+
+def test_spectral_norm_zero_matrix_preserves_a_usable_cached_direction() -> None:
+    matrices = torch.zeros(2, 5, 3)
+
+    torch.manual_seed(0)
+    estimates, cached_u = spectral_norm(matrices, n_iter=20)
+
+    torch.testing.assert_close(estimates, torch.zeros_like(estimates))
+    torch.testing.assert_close(
+        torch.linalg.vector_norm(cached_u, dim=-2),
+        torch.ones(2, 1),
+    )
+    assert torch.isfinite(cached_u).all()
+
+    matrices[:, 0, 0] = 2.0
+    estimates, cached_u = spectral_norm(matrices, cached_u=cached_u, n_iter=3)
+    torch.testing.assert_close(estimates, torch.full((2,), 2.0))
+    assert torch.isfinite(cached_u).all()
+
+
+def test_orth_muon_clips_projected_update_and_reuses_cached_power_vector(monkeypatch) -> None:
+    calls: list[tuple[int, torch.Tensor | None]] = []
+    applied_updates: list[torch.Tensor] = []
+
+    def fake_spectral_norm(
+        update: torch.Tensor,
+        cached_u: torch.Tensor | None = None,
+        n_iter: int = 10,
+        eps: float = 1e-7,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        del eps
+        assert update.shape == (2, 4, 3)
+        calls.append((n_iter, None if cached_u is None else cached_u.clone()))
+        estimates = torch.tensor([2.0, 0.5], device=update.device)
+        next_u = torch.full(
+            (update.shape[0], min(update.shape[-2:]), 1),
+            float(len(calls)),
+            device=update.device,
+        )
+        return estimates, next_u
+
+    def capture_stiefel_update(
+        x: torch.Tensor,
+        update: torch.Tensor,
+        **kwargs,
+    ) -> torch.Tensor:
+        assert kwargs == {"do_projection": False}
+        applied_updates.append(update.clone())
+        return x
+
+    monkeypatch.setattr(
+        "ortho_llm.optim.orth_muon.orthogonalize_newton_schulz",
+        lambda update, **_kwargs: torch.ones_like(update),
+    )
+    monkeypatch.setattr(
+        "ortho_llm.optim.orth_muon.stiefel_project",
+        lambda _x, update: update,
+    )
+    monkeypatch.setattr("ortho_llm.optim.orth_muon.spectral_norm", fake_spectral_norm)
+    monkeypatch.setattr(
+        "ortho_llm.optim.orth_muon.stiefel_update_taylor",
+        capture_stiefel_update,
+    )
+
+    param = torch.nn.Parameter(torch.zeros(2, 4, 3))
+    optimizer = OrthMuon(
+        param,
+        lr=1.0,
+        momentum=0.0,
+        nesterov=False,
+        ns_steps=0,
+        submat_dim=2,
+    )
+
+    param.grad = torch.ones_like(param)
+    optimizer.step()
+    param.grad = torch.ones_like(param)
+    optimizer.step()
+
+    assert [n_iter for n_iter, _ in calls] == [20, 3]
+    assert calls[0][1] is None
+    torch.testing.assert_close(calls[1][1], torch.ones(2, 3, 1))
+
+    step_scale = 0.2 * 4**0.5
+    expected_update = torch.full((4, 2, 3), -step_scale)
+    expected_update[:2].div_(2.0 * 1.01)
+    torch.testing.assert_close(applied_updates[0], expected_update)
+    torch.testing.assert_close(applied_updates[1], expected_update)
+
+    restored_param = torch.nn.Parameter(torch.zeros_like(param))
+    restored_optimizer = OrthMuon(
+        restored_param,
+        lr=1.0,
+        momentum=0.0,
+        nesterov=False,
+        ns_steps=0,
+        submat_dim=2,
+    )
+    restored_optimizer.load_state_dict(optimizer.state_dict())
+    restored_param.grad = torch.ones_like(restored_param)
+    restored_optimizer.step()
+
+    assert calls[-1][0] == 3
+    torch.testing.assert_close(calls[-1][1], torch.full((2, 3, 1), 2.0))
+    assert "spectral_norm_u" in restored_optimizer.state[restored_param]
 
 
 def test_stiefel_horner_series_matches_sequential_reference() -> None:

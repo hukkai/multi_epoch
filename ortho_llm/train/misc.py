@@ -50,6 +50,6 @@ def load_rng_state_dict(state: dict) -> None:
         return
     random.setstate(state["python"])
     np.random.set_state(state["numpy"])
-    torch.set_rng_state(state["torch"])
+    torch.set_rng_state(state["torch"].cpu())
     if torch.cuda.is_available() and "cuda" in state:
-        torch.cuda.set_rng_state_all(state["cuda"])
+        torch.cuda.set_rng_state_all([cuda_state.cpu() for cuda_state in state["cuda"]])
