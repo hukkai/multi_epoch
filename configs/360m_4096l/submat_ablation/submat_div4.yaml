@@ -1,0 +1,5 @@
+extends: ../sweeps/orth_muon_lr/orth_muon_lr0p004.yaml
+train:
+  output: ./output/360m_4096l/submat_ablation/submat_div4
+optim:
+  submat_dim: 8
