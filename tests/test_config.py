@@ -61,6 +61,7 @@ def test_nested_orth_adam_config_sets_role_policy() -> None:
     ]
     assert config.optim.default_role_optimizer == "orth_adam"
     assert config.model.row_block_size == 4
+    assert config.model.mlp_affine is True
 
 
 def test_flat_config_is_rejected() -> None:

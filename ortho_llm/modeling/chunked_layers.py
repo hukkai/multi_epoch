@@ -213,6 +213,38 @@ class HybridAttention(nn.Module):
         return self._linear(attn_output, "attn.o", "o_proj", bank, layer_idx, layer_views)
 
 
+@torch.compile
+def swiglu_with_affine(
+    gate: torch.Tensor,
+    up: torch.Tensor,
+    gate_affine: torch.Tensor,
+    mid_affine: torch.Tensor,
+) -> torch.Tensor:
+    gate_affine = gate_affine.to(dtype=gate.dtype)
+    mid_affine = mid_affine.to(dtype=up.dtype)
+    return F.silu(gate * gate_affine) * up * mid_affine
+
+
+@torch.compile
+def swiglu_with_gate_affine(
+    gate: torch.Tensor,
+    up: torch.Tensor,
+    gate_affine: torch.Tensor,
+) -> torch.Tensor:
+    gate_affine = gate_affine.to(dtype=gate.dtype)
+    return F.silu(gate * gate_affine) * up
+
+
+@torch.compile
+def swiglu_with_mid_affine(
+    gate: torch.Tensor,
+    up: torch.Tensor,
+    mid_affine: torch.Tensor,
+) -> torch.Tensor:
+    mid_affine = mid_affine.to(dtype=up.dtype)
+    return F.silu(gate) * up * mid_affine
+
+
 class HybridMLP(nn.Module):
     def __init__(self, config: ModelConfig, enabled_roles: set[str]) -> None:
         super().__init__()
@@ -227,6 +259,29 @@ class HybridMLP(nn.Module):
         ):
             if role in enabled_roles:
                 delattr(self.dense, attr)
+
+        intermediate_size = config.hidden_size * config.mlp_ratio
+        self.gate_affine: nn.Parameter | None
+        self.mid_affine: nn.Parameter | None
+        if config.mlp_affine and "mlp.gate" in enabled_roles:
+            self.gate_affine = nn.Parameter(torch.ones(intermediate_size))
+        else:
+            self.gate_affine = None
+        if config.mlp_affine and {"mlp.up", "mlp.down"} & enabled_roles:
+            self.mid_affine = nn.Parameter(torch.ones(intermediate_size))
+        else:
+            self.mid_affine = None
+
+    def role_affine_parameters(self) -> dict[str, tuple[nn.Parameter, ...]]:
+        params: dict[str, tuple[nn.Parameter, ...]] = {}
+        if isinstance(self.gate_affine, nn.Parameter):
+            params["mlp.gate"] = (self.gate_affine,)
+        if isinstance(self.mid_affine, nn.Parameter):
+            if "mlp.up" in self.enabled_roles:
+                params["mlp.up"] = (self.mid_affine,)
+            if "mlp.down" in self.enabled_roles:
+                params["mlp.down"] = (self.mid_affine,)
+        return params
 
     def _in_proj(
         self,
@@ -259,9 +314,17 @@ class HybridMLP(nn.Module):
         layer_idx: int,
         layer_views: RoleLayerViews,
     ) -> torch.Tensor:
-        gated = F.silu(self._in_proj(x, "mlp.gate", "gate_proj", bank, layer_idx, layer_views))
+        gated = self._in_proj(x, "mlp.gate", "gate_proj", bank, layer_idx, layer_views)
         up = self._in_proj(x, "mlp.up", "up_proj", bank, layer_idx, layer_views)
-        return self._down_proj(gated * up, bank, layer_idx, layer_views)
+        if isinstance(self.gate_affine, nn.Parameter) and isinstance(self.mid_affine, nn.Parameter):
+            hidden = swiglu_with_affine(gated, up, self.gate_affine, self.mid_affine)
+        elif isinstance(self.gate_affine, nn.Parameter):
+            hidden = swiglu_with_gate_affine(gated, up, self.gate_affine)
+        elif isinstance(self.mid_affine, nn.Parameter):
+            hidden = swiglu_with_mid_affine(gated, up, self.mid_affine)
+        else:
+            hidden = F.silu(gated) * up
+        return self._down_proj(hidden, bank, layer_idx, layer_views)
 
 
 class HybridBlock(nn.Module):
@@ -321,6 +384,13 @@ class RoleChunkedLlamaForCausalLM(nn.Module):
 
     def role_parameters(self) -> dict[str, nn.Parameter]:
         return self.chunk_bank.role_parameters()
+
+    def role_affine_parameters(self) -> dict[str, tuple[nn.Parameter, ...]]:
+        params: dict[str, list[nn.Parameter]] = {}
+        for layer in self.layers:
+            for role, role_params in layer.mlp.role_affine_parameters().items():
+                params.setdefault(role, []).extend(role_params)
+        return {role: tuple(role_params) for role, role_params in params.items()}
 
     def forward(
         self,

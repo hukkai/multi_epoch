@@ -145,11 +145,23 @@ def _build_role_optimizer(kind: str, params: list[torch.nn.Parameter], config: E
 def build_optimizers(config: ExperimentConfig, model: torch.nn.Module) -> OptimBundle:
     registry = model.get_parameter_registry() if hasattr(model, "get_parameter_registry") else None
     role_params = registry.role_parameters() if registry is not None else {}
+    role_affine_params = model.role_affine_parameters() if hasattr(model, "role_affine_parameters") else {}
     role_to_owner = resolve_role_owners(config, registry)
 
     for role, owner in role_to_owner.items():
         if owner == "frozen":
             role_params[role].requires_grad_(False)
+
+    affine_param_roles: dict[int, tuple[torch.nn.Parameter, set[str]]] = {}
+    for role, params in role_affine_params.items():
+        for param in params:
+            param_id = id(param)
+            if param_id not in affine_param_roles:
+                affine_param_roles[param_id] = (param, set())
+            affine_param_roles[param_id][1].add(role)
+    for param, roles in affine_param_roles.values():
+        if roles and all(role_to_owner[role] == "frozen" for role in roles):
+            param.requires_grad_(False)
 
     excluded_role_param_ids = {id(param) for param in role_params.values()}
     adamw_role_params = [role_params[role] for role, owner in role_to_owner.items() if owner == "adamw"]
