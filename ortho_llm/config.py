@@ -42,6 +42,7 @@ class ModelConfig:
     tie_word_embeddings: bool = False
     parameterization: str = "dense"
     enabled_roles: list[str] = field(default_factory=list)
+    attention_affine: bool = True
     mlp_affine: bool = True
     init: str = "qr"
     num_kv_heads: int | None = None

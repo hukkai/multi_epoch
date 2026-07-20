@@ -170,6 +170,32 @@ class HybridAttention(nn.Module):
             if role in enabled_roles:
                 delattr(self.dense, attr)
 
+        for role, attr, size in (
+            ("attn.q", "q_affine", self.hidden_size),
+            ("attn.k", "k_affine", self.kv_hidden_size),
+            ("attn.v", "v_affine", self.kv_hidden_size),
+            ("attn.o", "o_affine", self.hidden_size),
+        ):
+            affine = (
+                nn.Parameter(torch.ones(size))
+                if config.attention_affine and role in enabled_roles
+                else None
+            )
+            setattr(self, attr, affine)
+
+    def role_affine_parameters(self) -> dict[str, tuple[nn.Parameter, ...]]:
+        params: dict[str, tuple[nn.Parameter, ...]] = {}
+        for role, attr in (
+            ("attn.q", "q_affine"),
+            ("attn.k", "k_affine"),
+            ("attn.v", "v_affine"),
+            ("attn.o", "o_affine"),
+        ):
+            affine = getattr(self, attr)
+            if isinstance(affine, nn.Parameter):
+                params[role] = (affine,)
+        return params
+
     def _linear(
         self,
         x: torch.Tensor,
@@ -180,7 +206,11 @@ class HybridAttention(nn.Module):
         layer_views: RoleLayerViews,
     ) -> torch.Tensor:
         if role in self.enabled_roles:
-            return F.linear(x, bank.attention_weight(role, layer_idx, layer_views))
+            weight = bank.attention_weight(role, layer_idx, layer_views)
+            affine = getattr(self, f"{role.removeprefix('attn.')}_affine")
+            if isinstance(affine, nn.Parameter):
+                weight = weight * affine[:, None]
+            return F.linear(x, weight)
         return getattr(self.dense, attr)(x)
 
     def forward(
@@ -388,6 +418,8 @@ class RoleChunkedLlamaForCausalLM(nn.Module):
     def role_affine_parameters(self) -> dict[str, tuple[nn.Parameter, ...]]:
         params: dict[str, list[nn.Parameter]] = {}
         for layer in self.layers:
+            for role, role_params in layer.self_attn.role_affine_parameters().items():
+                params.setdefault(role, []).extend(role_params)
             for role, role_params in layer.mlp.role_affine_parameters().items():
                 params.setdefault(role, []).extend(role_params)
         return {role: tuple(role_params) for role, role_params in params.items()}

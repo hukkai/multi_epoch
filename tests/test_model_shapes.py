@@ -89,13 +89,33 @@ def test_chunk_bank_returns_layer_sliced_weights() -> None:
     assert mlp_weight is layer_views.weights["mlp.up"][0]
 
 
-def test_mlp_affines_follow_enabled_roles() -> None:
+def test_affines_follow_enabled_roles() -> None:
     attention_config = tiny_config(["attn.q", "attn.k", "attn.v", "attn.o"])
     attention_model = build_model(attention_config.model)
-    attention_affines = [
-        name for name, _ in attention_model.named_parameters() if name.endswith(("_affine",))
-    ]
-    assert attention_affines == []
+    attention_affine_shapes = {
+        name: tuple(param.shape)
+        for name, param in attention_model.named_parameters()
+        if name.endswith(("_affine",))
+    }
+    assert attention_affine_shapes == {
+        "layers.0.self_attn.q_affine": (32,),
+        "layers.0.self_attn.k_affine": (32,),
+        "layers.0.self_attn.v_affine": (32,),
+        "layers.0.self_attn.o_affine": (32,),
+        "layers.1.self_attn.q_affine": (32,),
+        "layers.1.self_attn.k_affine": (32,),
+        "layers.1.self_attn.v_affine": (32,),
+        "layers.1.self_attn.o_affine": (32,),
+    }
+    attention_role_affine_counts = {
+        role: len(params) for role, params in attention_model.role_affine_parameters().items()
+    }
+    assert attention_role_affine_counts == {
+        "attn.q": 2,
+        "attn.k": 2,
+        "attn.v": 2,
+        "attn.o": 2,
+    }
 
     mlp_config = tiny_config(["mlp.gate", "mlp.up", "mlp.down"])
     mlp_model = build_model(mlp_config.model)
@@ -114,6 +134,38 @@ def test_mlp_affines_follow_enabled_roles() -> None:
         role: len(params) for role, params in mlp_model.role_affine_parameters().items()
     }
     assert role_affine_counts == {"mlp.gate": 2, "mlp.up": 2, "mlp.down": 2}
+
+
+def test_attention_affine_scales_weight_rows() -> None:
+    config = tiny_config(["attn.q"])
+    model = build_model(config.model)
+    attention = model.layers[0].self_attn
+    layer_views = model.chunk_bank.layer_views()
+    x = torch.randn(2, 3, config.model.hidden_size)
+    affine = torch.linspace(0.5, 1.5, config.model.hidden_size)
+    with torch.no_grad():
+        attention.q_affine.copy_(affine)
+
+    actual = attention._linear(x, "attn.q", "q_proj", model.chunk_bank, 0, layer_views)
+    weight = model.chunk_bank.attention_weight("attn.q", 0, layer_views)
+    expected = torch.nn.functional.linear(x, weight * affine[:, None])
+    torch.testing.assert_close(actual, expected)
+
+
+def test_attention_affines_can_be_disabled() -> None:
+    config = tiny_config(["attn.q", "attn.k", "attn.v", "attn.o"])
+    config.model.attention_affine = False
+    model = build_model(config.model)
+
+    affine_names = [
+        name for name, _ in model.named_parameters() if name.endswith(("_affine",))
+    ]
+    assert affine_names == []
+    assert model.role_affine_parameters() == {}
+
+    input_ids = torch.randint(0, config.model.vocab_size, (2, 16))
+    output = model(input_ids=input_ids)
+    assert output["logits"].shape == (2, 16, config.model.vocab_size)
 
 
 def test_mlp_affines_can_be_disabled() -> None:
@@ -179,6 +231,8 @@ def test_grouped_matrix_gqa_kv_storage_is_rectangular() -> None:
     model = build_model(config.model)
     assert tuple(model.role_parameters()["attn.k"].shape) == (2, 16, 32)
     assert tuple(model.role_parameters()["attn.v"].shape) == (2, 16, 32)
+    assert tuple(model.layers[0].self_attn.k_affine.shape) == (16,)
+    assert tuple(model.layers[0].self_attn.v_affine.shape) == (16,)
     input_ids = torch.randint(0, config.model.vocab_size, (2, 16))
     labels = torch.randint(0, config.model.vocab_size, (2, 16))
     output = model(input_ids=input_ids, labels=labels)

@@ -1,0 +1,6 @@
+extends: ../sweeps/muon_lr_wd/muon_lr0p002_wd0p3.yaml
+model:
+  mlp_affine: true
+  attention_affine: true
+train:
+  output: ./output/360m_4096l/affine_ablation/muon_lr0p002_wd0p3_all_affine

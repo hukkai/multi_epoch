@@ -67,3 +67,24 @@ bash run.sh configs/360m_4096l/role_ablation/mlp_down_muon.yaml
 - 1.3B base sweep: 24 runs
 - 360M role ablation: 7 runs
 - Total: 31 runs
+
+## 360M Affine Ablation
+
+Each optimizer setting tests no affine, MLP affine only, and both MLP and
+attention affine. The Muon runs use the best weight decay for each learning
+rate from `experience.md`.
+
+```bash
+bash run.sh configs/360m_4096l/affine_ablation/muon_lr0p002_wd0p3_no_affine.yaml
+bash run.sh configs/360m_4096l/affine_ablation/muon_lr0p002_wd0p3_mlp_affine.yaml
+bash run.sh configs/360m_4096l/affine_ablation/muon_lr0p002_wd0p3_all_affine.yaml
+bash run.sh configs/360m_4096l/affine_ablation/muon_lr0p004_wd0p5_no_affine.yaml
+bash run.sh configs/360m_4096l/affine_ablation/muon_lr0p004_wd0p5_mlp_affine.yaml
+bash run.sh configs/360m_4096l/affine_ablation/muon_lr0p004_wd0p5_all_affine.yaml
+bash run.sh configs/360m_4096l/affine_ablation/orth_muon_lr0p002_no_affine.yaml
+bash run.sh configs/360m_4096l/affine_ablation/orth_muon_lr0p002_mlp_affine.yaml
+bash run.sh configs/360m_4096l/affine_ablation/orth_muon_lr0p002_all_affine.yaml
+bash run.sh configs/360m_4096l/affine_ablation/orth_muon_lr0p004_no_affine.yaml
+bash run.sh configs/360m_4096l/affine_ablation/orth_muon_lr0p004_mlp_affine.yaml
+bash run.sh configs/360m_4096l/affine_ablation/orth_muon_lr0p004_all_affine.yaml
+```

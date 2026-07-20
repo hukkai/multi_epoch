@@ -1,0 +1,6 @@
+extends: ../sweeps/orth_muon_lr/orth_muon_lr0p002.yaml
+model:
+  mlp_affine: true
+  attention_affine: true
+train:
+  output: ./output/360m_4096l/affine_ablation/orth_muon_lr0p002_all_affine
