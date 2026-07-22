@@ -1,0 +1,5 @@
+extends: orth_muon_lr0p004_all_affine.yaml
+optim:
+  affine_lr_multiplier: 2.0
+train:
+  output: ./output/360m_4096l/affine_ablation/orth_muon_lr0p004_all_affine_lr_multiplier2

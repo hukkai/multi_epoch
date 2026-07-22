@@ -164,13 +164,28 @@ def build_optimizers(config: ExperimentConfig, model: torch.nn.Module) -> OptimB
             param.requires_grad_(False)
 
     excluded_role_param_ids = {id(param) for param in role_params.values()}
+    affine_param_ids = set(affine_param_roles)
+    trainable_affine_params = [
+        param
+        for param in model.parameters()
+        if id(param) in affine_param_ids and param.requires_grad
+    ]
     adamw_role_params = [role_params[role] for role, owner in role_to_owner.items() if owner == "adamw"]
     main_groups = get_param_groups(
         model,
         config.train.weight_decay,
-        exclude_param_ids=excluded_role_param_ids,
+        exclude_param_ids=excluded_role_param_ids | affine_param_ids,
         extra_decay_params=adamw_role_params,
     )
+    if trainable_affine_params:
+        main_groups.append(
+            {
+                "params": trainable_affine_params,
+                "weight_decay": 0.0,
+                "lr": config.train.lr * config.optim.affine_lr_multiplier,
+                "lr_multiplier": config.optim.affine_lr_multiplier,
+            }
+        )
     main_optimizer = None
     if main_groups:
         main_optimizer = torch.optim.AdamW(

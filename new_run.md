@@ -88,3 +88,10 @@ bash run.sh configs/360m_4096l/affine_ablation/orth_muon_lr0p004_no_affine.yaml
 bash run.sh configs/360m_4096l/affine_ablation/orth_muon_lr0p004_mlp_affine.yaml
 bash run.sh configs/360m_4096l/affine_ablation/orth_muon_lr0p004_all_affine.yaml
 ```
+
+### Affine LR Multiplier
+
+```bash
+bash run.sh configs/360m_4096l/affine_ablation/orth_muon_lr0p002_all_affine_lr_multiplier2.yaml
+bash run.sh configs/360m_4096l/affine_ablation/orth_muon_lr0p004_all_affine_lr_multiplier2.yaml
+```

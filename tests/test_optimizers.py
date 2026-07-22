@@ -250,6 +250,70 @@ def test_optimizer_factory_keeps_shared_mlp_affine_trainable_for_live_role() -> 
     assert model.layers[1].mlp.mid_affine.requires_grad
 
 
+def test_affine_lr_multiplier_scales_all_affine_parameters() -> None:
+    config = config_from_dict(
+        {
+            "model": {
+                "vocab_size": 128,
+                "hidden_size": 32,
+                "num_layers": 2,
+                "num_heads": 4,
+                "mlp_ratio": 2,
+                "max_position_embeddings": 32,
+                "parameterization": "grouped_matrix",
+                "enabled_roles": [
+                    "attn.q",
+                    "attn.k",
+                    "attn.v",
+                    "attn.o",
+                    "mlp.gate",
+                    "mlp.up",
+                    "mlp.down",
+                ],
+            },
+            "train": {
+                "batch_size": 2,
+                "global_batch_size": 2,
+                "seq_length": 16,
+                "num_steps": 2,
+                "lr": 0.001,
+                "min_lr": 0.0001,
+            },
+            "optim": {
+                "default_role_optimizer": "orth_muon",
+                "affine_lr_multiplier": 2.0,
+                "submat_dim": 4,
+            },
+        }
+    )
+    model = build_model(config.model)
+    bundle = build_optimizers(config, model)
+    assert bundle.main_optimizer is not None
+
+    affine_params = {
+        param
+        for params in model.role_affine_parameters().values()
+        for param in params
+    }
+    affine_groups = [
+        group
+        for group in bundle.main_optimizer.param_groups
+        if group.get("lr_multiplier") == 2.0
+    ]
+    assert len(affine_groups) == 1
+    assert set(affine_groups[0]["params"]) == affine_params
+    assert affine_groups[0]["weight_decay"] == 0.0
+    assert affine_groups[0]["lr"] == pytest.approx(0.002)
+
+    main_lr, _ = _set_optimizer_lrs(bundle, config, step=1, warmup_steps=1)
+    assert affine_groups[0]["lr"] == pytest.approx(main_lr * 2.0)
+    assert all(
+        group["lr"] == pytest.approx(main_lr)
+        for group in bundle.main_optimizer.param_groups
+        if "lr_multiplier" not in group
+    )
+
+
 def test_optimizer_factory_freezes_unowned_attention_affines() -> None:
     config = config_from_dict(
         {

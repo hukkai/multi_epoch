@@ -63,7 +63,7 @@ def _set_optimizer_lrs(bundle: OptimBundle, config: ExperimentConfig, step: int,
 
     if bundle.main_optimizer is not None:
         for param_group in bundle.main_optimizer.param_groups:
-            param_group["lr"] = main_lr
+            param_group["lr"] = main_lr * param_group.get("lr_multiplier", 1.0)
 
     for kind, optimizer in bundle.role_optimizers.items():
         if kind == "orth_adam":

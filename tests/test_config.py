@@ -60,6 +60,7 @@ def test_nested_orth_adam_config_sets_role_policy() -> None:
         "mlp.down",
     ]
     assert config.optim.default_role_optimizer == "orth_adam"
+    assert config.optim.affine_lr_multiplier == 1.0
     assert config.model.row_block_size == 4
     assert config.model.attention_affine is True
     assert config.model.mlp_affine is True

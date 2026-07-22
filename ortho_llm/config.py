@@ -73,6 +73,7 @@ class TrainConfig:
 class OptimConfig:
     default_role_optimizer: str = "frozen"
     role_overrides: dict[str, str] = field(default_factory=dict)
+    affine_lr_multiplier: float = 1.0
     adamw_beta1: float = 0.9
     adamw_beta2: float = 0.95
     adamw_eps: float = 1e-8
