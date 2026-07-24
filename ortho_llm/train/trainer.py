@@ -218,6 +218,7 @@ def train(config: ExperimentConfig) -> None:
     with torch.device(device):
         raw_model = build_model(config.model)
     raw_model = raw_model.to(device)
+    raw_model = torch.compile(raw_model)
 
     dataset = MemmapTokenDataset(
         config.data.data_dir,
