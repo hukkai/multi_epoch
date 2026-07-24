@@ -126,9 +126,11 @@ def test_affines_follow_enabled_roles() -> None:
     }
     assert affine_shapes == {
         "layers.0.mlp.gate_affine": (64,),
-        "layers.0.mlp.mid_affine": (64,),
+        "layers.0.mlp.up_affine": (64,),
+        "layers.0.mlp.down_affine": (32,),
         "layers.1.mlp.gate_affine": (64,),
-        "layers.1.mlp.mid_affine": (64,),
+        "layers.1.mlp.up_affine": (64,),
+        "layers.1.mlp.down_affine": (32,),
     }
     role_affine_counts = {
         role: len(params) for role, params in mlp_model.role_affine_parameters().items()
@@ -150,6 +152,30 @@ def test_attention_affine_scales_weight_rows() -> None:
     weight = model.chunk_bank.attention_weight("attn.q", 0, layer_views)
     expected = torch.nn.functional.linear(x, weight * affine[:, None])
     torch.testing.assert_close(actual, expected)
+
+
+def test_mlp_affines_scale_weight_rows() -> None:
+    config = tiny_config(["mlp.gate", "mlp.up", "mlp.down"])
+    model = build_model(config.model)
+    mlp = model.layers[0].mlp
+    layer_views = model.chunk_bank.layer_views()
+
+    for role, attr, input_size, output_size in (
+        ("mlp.gate", "gate_proj", config.model.hidden_size, 64),
+        ("mlp.up", "up_proj", config.model.hidden_size, 64),
+        ("mlp.down", "down_proj", 64, config.model.hidden_size),
+    ):
+        x = torch.randn(2, 3, input_size)
+        affine = torch.linspace(0.5, 1.5, output_size)
+        with torch.no_grad():
+            getattr(mlp, f"{role.removeprefix('mlp.')}_affine").copy_(affine)
+
+        actual = mlp._linear(x, role, attr, model.chunk_bank, 0, layer_views)
+        weight = model.chunk_bank.mlp_weight(role, 0, layer_views)
+        if role == "mlp.down":
+            weight = weight.T
+        expected = torch.nn.functional.linear(x, weight * affine[:, None])
+        torch.testing.assert_close(actual, expected)
 
 
 def test_attention_affines_can_be_disabled() -> None:

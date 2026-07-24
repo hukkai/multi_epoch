@@ -214,11 +214,11 @@ def test_optimizer_factory_freezes_unowned_mlp_affines() -> None:
     )
     model = build_model(config.model)
     build_optimizers(config, model)
-    assert not model.layers[0].mlp.mid_affine.requires_grad
-    assert not model.layers[1].mlp.mid_affine.requires_grad
+    assert not model.layers[0].mlp.down_affine.requires_grad
+    assert not model.layers[1].mlp.down_affine.requires_grad
 
 
-def test_optimizer_factory_keeps_shared_mlp_affine_trainable_for_live_role() -> None:
+def test_optimizer_factory_tracks_mlp_affines_by_role() -> None:
     config = config_from_dict(
         {
             "model": {
@@ -246,8 +246,10 @@ def test_optimizer_factory_keeps_shared_mlp_affine_trainable_for_live_role() -> 
     )
     model = build_model(config.model)
     build_optimizers(config, model)
-    assert model.layers[0].mlp.mid_affine.requires_grad
-    assert model.layers[1].mlp.mid_affine.requires_grad
+    assert model.layers[0].mlp.up_affine.requires_grad
+    assert model.layers[1].mlp.up_affine.requires_grad
+    assert not model.layers[0].mlp.down_affine.requires_grad
+    assert not model.layers[1].mlp.down_affine.requires_grad
 
 
 def test_affine_lr_multiplier_scales_all_affine_parameters() -> None:
