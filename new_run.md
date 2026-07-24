@@ -95,3 +95,17 @@ bash run.sh configs/360m_4096l/affine_ablation/orth_muon_lr0p004_all_affine.yaml
 bash run.sh configs/360m_4096l/affine_ablation/orth_muon_lr0p002_all_affine_lr_multiplier2.yaml
 bash run.sh configs/360m_4096l/affine_ablation/orth_muon_lr0p004_all_affine_lr_multiplier2.yaml
 ```
+
+
+### Submat Dim Ablation
+
+```bash
+bash run.sh configs/360m_4096l/submat_ablation/attn_muon_mlp_orth_muon_submat2.yaml
+bash run.sh configs/360m_4096l/submat_ablation/attn_muon_mlp_orth_muon_submat8.yaml
+bash run.sh configs/360m_4096l/submat_ablation/attn_muon_mlp_orth_muon_submat32.yaml
+bash run.sh configs/360m_4096l/submat_ablation/attn_muon_mlp_orth_muon_submat128.yaml
+bash run.sh configs/360m_4096l/submat_ablation/attn_orth_muon_mlp_muon_submat2.yaml
+bash run.sh configs/360m_4096l/submat_ablation/attn_orth_muon_mlp_muon_submat8.yaml
+bash run.sh configs/360m_4096l/submat_ablation/attn_orth_muon_mlp_muon_submat32.yaml
+bash run.sh configs/360m_4096l/submat_ablation/attn_orth_muon_mlp_muon_submat128.yaml
+```
