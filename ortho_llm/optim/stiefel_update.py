@@ -38,9 +38,14 @@ def _validate_shape(a: torch.Tensor) -> None:
         raise ValueError(f"expected n <= m, got shape {tuple(a.shape)}")
 
 
-def _gram_error(a: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+def _gram_error_matrix(a: torch.Tensor) -> torch.Tensor:
     gram_error = a @ a.transpose(-1, -2)
     gram_error.diagonal(dim1=-2, dim2=-1).sub_(1)
+    return gram_error
+
+
+def _gram_error(a: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    gram_error = _gram_error_matrix(a)
     err = torch.linalg.matrix_norm(gram_error, ord="fro", dim=(-2, -1))
     return gram_error, err
 
@@ -69,6 +74,41 @@ else:
     _apply_series2 = _apply_series2_eager
 
 
+def _stiefel_update_series4_eager(
+    x: torch.Tensor,
+    update: torch.Tensor,
+) -> torch.Tensor:
+    update = stiefel_project(x, update)
+    a = x + update
+    work = a.to(_screen_dtype(a.dtype))
+    gram_error = _gram_error_matrix(work)
+    return _apply_series(work, gram_error, _COEFFS4).to(a.dtype)
+
+
+def _stiefel_update_series4_unprojected_eager(
+    x: torch.Tensor,
+    update: torch.Tensor,
+) -> torch.Tensor:
+    a = x + update
+    work = a.to(_screen_dtype(a.dtype))
+    gram_error = _gram_error_matrix(work)
+    return _apply_series(work, gram_error, _COEFFS4).to(a.dtype)
+
+
+if _compile_stiefel_enabled() and hasattr(torch, "compile"):
+    _stiefel_update_series4 = torch.compile(
+        _stiefel_update_series4_eager,
+        fullgraph=True,
+    )
+    _stiefel_update_series4_unprojected = torch.compile(
+        _stiefel_update_series4_unprojected_eager,
+        fullgraph=True,
+    )
+else:
+    _stiefel_update_series4 = _stiefel_update_series4_eager
+    _stiefel_update_series4_unprojected = _stiefel_update_series4_unprojected_eager
+
+
 @torch.no_grad()
 def fast_polar(
     a: torch.Tensor,
@@ -95,23 +135,18 @@ def fast_polar(
     return exact_polar(a, tolerance=0.0, eps=eps)
 
 
+@torch.no_grad()
 def stiefel_update_taylor(
     x: torch.Tensor,
     update: torch.Tensor,
-    tolerance: float = 1e-5,
-    eps: float = 1e-10,
-    taylor2_max_err: float = TAYLOR2_MAX_ERR,
-    taylor3_max_err: float = TAYLOR3_MAX_ERR,
-    taylor4_max_err: float = TAYLOR4_MAX_ERR,
     do_projection: bool = True,
 ) -> torch.Tensor:
+    _validate_shape(x)
+    if x.shape != update.shape:
+        raise ValueError(
+            "expected x and update to have the same shape, "
+            f"got {tuple(x.shape)} and {tuple(update.shape)}"
+        )
     if do_projection:
-        update = stiefel_project(x, update)
-    return fast_polar(
-        x + update,
-        tolerance=tolerance,
-        eps=eps,
-        taylor2_max_err=taylor2_max_err,
-        taylor3_max_err=taylor3_max_err,
-        taylor4_max_err=taylor4_max_err,
-    )
+        return _stiefel_update_series4(x, update)
+    return _stiefel_update_series4_unprojected(x, update)

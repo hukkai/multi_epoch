@@ -12,6 +12,9 @@ from ortho_llm.optim.stiefel_update import (
     _COEFFS4,
     _apply_series,
     _apply_series2_eager,
+    _stiefel_update_series4_eager,
+    stiefel_project,
+    stiefel_update_taylor,
 )
 from ortho_llm.train.trainer import _set_optimizer_lrs
 
@@ -417,7 +420,7 @@ def test_muon_optimizers_preserve_shape() -> None:
         assert tuple(param.shape) == (4, 8, 8)
 
 
-def test_orth_muon_applies_projected_update_without_spectral_norm_clipping(monkeypatch) -> None:
+def test_orth_muon_passes_scaled_update_for_internal_projection(monkeypatch) -> None:
     applied_updates: list[torch.Tensor] = []
 
     def capture_stiefel_update(
@@ -425,17 +428,13 @@ def test_orth_muon_applies_projected_update_without_spectral_norm_clipping(monke
         update: torch.Tensor,
         **kwargs,
     ) -> torch.Tensor:
-        assert kwargs == {"do_projection": False}
+        assert kwargs == {"do_projection": True}
         applied_updates.append(update.clone())
         return x
 
     monkeypatch.setattr(
         "ortho_llm.optim.orth_muon.orthogonalize_newton_schulz",
         lambda update, **_kwargs: torch.ones_like(update),
-    )
-    monkeypatch.setattr(
-        "ortho_llm.optim.orth_muon.stiefel_project",
-        lambda _x, update: update,
     )
     monkeypatch.setattr(
         "ortho_llm.optim.orth_muon.stiefel_update_taylor",
@@ -505,3 +504,23 @@ def test_stiefel_horner_series_matches_sequential_reference() -> None:
                 rtol=rtol,
                 atol=atol,
             )
+
+
+def test_fused_stiefel_projection_series4_matches_reference() -> None:
+    generator = torch.Generator().manual_seed(1)
+    raw = torch.randn(3, 17, 4, generator=generator, dtype=torch.float32)
+    q, _ = torch.linalg.qr(raw, mode="reduced")
+    x = q.transpose(-1, -2).contiguous()
+    update = 1e-2 * torch.randn(x.shape, generator=generator, dtype=x.dtype)
+
+    projected_update = stiefel_project(x, update)
+    a = x + projected_update
+    gram_error = a @ a.transpose(-1, -2)
+    gram_error.diagonal(dim1=-2, dim2=-1).sub_(1)
+    expected = _apply_series_reference(a, gram_error, _COEFFS4)
+
+    eager = _stiefel_update_series4_eager(x, update)
+    compiled = stiefel_update_taylor(x, update, do_projection=True)
+
+    torch.testing.assert_close(eager, expected, rtol=2e-5, atol=2e-6)
+    torch.testing.assert_close(compiled, expected, rtol=2e-5, atol=2e-6)
