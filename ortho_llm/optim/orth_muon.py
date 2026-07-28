@@ -8,7 +8,7 @@ import torch.distributed as dist
 
 from .muon import orthogonalize_newton_schulz
 from .ops import polar
-from .stiefel_update import stiefel_project, stiefel_update_taylor
+from .stiefel_update import stiefel_update_taylor
 
 
 class OrthMuon(torch.optim.Optimizer):
@@ -129,9 +129,9 @@ class OrthMuon(torch.optim.Optimizer):
 
                 x = param_slice.float().reshape(-1, submat_dim, cols)
 
-                update = stiefel_project(x, update.reshape_as(x))
+                update = update.reshape_as(x)
                 update.mul_(-lr * scale)
-                new_x = stiefel_update_taylor(x, update, do_projection=False)
+                new_x = stiefel_update_taylor(x, update, do_projection=True)
 
                 if is_last and strict_stiefel:
                     new_x = polar(new_x)

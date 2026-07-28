@@ -243,38 +243,6 @@ class HybridAttention(nn.Module):
         return self._linear(attn_output, "attn.o", "o_proj", bank, layer_idx, layer_views)
 
 
-@torch.compile
-def swiglu_with_affine(
-    gate: torch.Tensor,
-    up: torch.Tensor,
-    gate_affine: torch.Tensor,
-    mid_affine: torch.Tensor,
-) -> torch.Tensor:
-    gate_affine = gate_affine.to(dtype=gate.dtype)
-    mid_affine = mid_affine.to(dtype=up.dtype)
-    return F.silu(gate * gate_affine) * up * mid_affine
-
-
-@torch.compile
-def swiglu_with_gate_affine(
-    gate: torch.Tensor,
-    up: torch.Tensor,
-    gate_affine: torch.Tensor,
-) -> torch.Tensor:
-    gate_affine = gate_affine.to(dtype=gate.dtype)
-    return F.silu(gate * gate_affine) * up
-
-
-@torch.compile
-def swiglu_with_mid_affine(
-    gate: torch.Tensor,
-    up: torch.Tensor,
-    mid_affine: torch.Tensor,
-) -> torch.Tensor:
-    mid_affine = mid_affine.to(dtype=up.dtype)
-    return F.silu(gate) * up * mid_affine
-
-
 class HybridMLP(nn.Module):
     def __init__(self, config: ModelConfig, enabled_roles: set[str]) -> None:
         super().__init__()
@@ -291,29 +259,31 @@ class HybridMLP(nn.Module):
                 delattr(self.dense, attr)
 
         intermediate_size = config.hidden_size * config.mlp_ratio
-        self.gate_affine: nn.Parameter | None
-        self.mid_affine: nn.Parameter | None
-        if config.mlp_affine and "mlp.gate" in enabled_roles:
-            self.gate_affine = nn.Parameter(torch.ones(intermediate_size))
-        else:
-            self.gate_affine = None
-        if config.mlp_affine and {"mlp.up", "mlp.down"} & enabled_roles:
-            self.mid_affine = nn.Parameter(torch.ones(intermediate_size))
-        else:
-            self.mid_affine = None
+        for role, attr, size in (
+            ("mlp.gate", "gate_affine", intermediate_size),
+            ("mlp.up", "up_affine", intermediate_size),
+            ("mlp.down", "down_affine", self.hidden_size),
+        ):
+            affine = (
+                nn.Parameter(torch.ones(size))
+                if config.mlp_affine and role in enabled_roles
+                else None
+            )
+            setattr(self, attr, affine)
 
     def role_affine_parameters(self) -> dict[str, tuple[nn.Parameter, ...]]:
         params: dict[str, tuple[nn.Parameter, ...]] = {}
-        if isinstance(self.gate_affine, nn.Parameter):
-            params["mlp.gate"] = (self.gate_affine,)
-        if isinstance(self.mid_affine, nn.Parameter):
-            if "mlp.up" in self.enabled_roles:
-                params["mlp.up"] = (self.mid_affine,)
-            if "mlp.down" in self.enabled_roles:
-                params["mlp.down"] = (self.mid_affine,)
+        for role, attr in (
+            ("mlp.gate", "gate_affine"),
+            ("mlp.up", "up_affine"),
+            ("mlp.down", "down_affine"),
+        ):
+            affine = getattr(self, attr)
+            if isinstance(affine, nn.Parameter):
+                params[role] = (affine,)
         return params
 
-    def _in_proj(
+    def _linear(
         self,
         x: torch.Tensor,
         role: str,
@@ -323,19 +293,14 @@ class HybridMLP(nn.Module):
         layer_views: RoleLayerViews,
     ) -> torch.Tensor:
         if role in self.enabled_roles:
-            return F.linear(x, bank.mlp_weight(role, layer_idx, layer_views))
+            weight = bank.mlp_weight(role, layer_idx, layer_views)
+            if role == "mlp.down":
+                weight = weight.T
+            affine = getattr(self, f"{role.removeprefix('mlp.')}_affine")
+            if isinstance(affine, nn.Parameter):
+                weight = weight * affine[:, None]
+            return F.linear(x, weight)
         return getattr(self.dense, attr)(x)
-
-    def _down_proj(
-        self,
-        x: torch.Tensor,
-        bank: RoleChunkBank,
-        layer_idx: int,
-        layer_views: RoleLayerViews,
-    ) -> torch.Tensor:
-        if "mlp.down" in self.enabled_roles:
-            return F.linear(x, bank.mlp_weight("mlp.down", layer_idx, layer_views).T)
-        return self.dense.down_proj(x)
 
     def forward(
         self,
@@ -344,17 +309,10 @@ class HybridMLP(nn.Module):
         layer_idx: int,
         layer_views: RoleLayerViews,
     ) -> torch.Tensor:
-        gated = self._in_proj(x, "mlp.gate", "gate_proj", bank, layer_idx, layer_views)
-        up = self._in_proj(x, "mlp.up", "up_proj", bank, layer_idx, layer_views)
-        if isinstance(self.gate_affine, nn.Parameter) and isinstance(self.mid_affine, nn.Parameter):
-            hidden = swiglu_with_affine(gated, up, self.gate_affine, self.mid_affine)
-        elif isinstance(self.gate_affine, nn.Parameter):
-            hidden = swiglu_with_gate_affine(gated, up, self.gate_affine)
-        elif isinstance(self.mid_affine, nn.Parameter):
-            hidden = swiglu_with_mid_affine(gated, up, self.mid_affine)
-        else:
-            hidden = F.silu(gated) * up
-        return self._down_proj(hidden, bank, layer_idx, layer_views)
+        gated = self._linear(x, "mlp.gate", "gate_proj", bank, layer_idx, layer_views)
+        up = self._linear(x, "mlp.up", "up_proj", bank, layer_idx, layer_views)
+        hidden = F.silu(gated) * up
+        return self._linear(hidden, "mlp.down", "down_proj", bank, layer_idx, layer_views)
 
 
 class HybridBlock(nn.Module):
