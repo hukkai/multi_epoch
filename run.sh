@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 export MASTER_PORT=$((12000 + RANDOM % 20000))
+export TORCHINDUCTOR_CACHE_DIR='./compile_cache'
 
 CONFIG=${1:-configs/360m_4096l/base/adamw_360m_4096l.yaml}
 
