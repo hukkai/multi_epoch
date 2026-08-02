@@ -109,3 +109,14 @@ bash run.sh configs/360m_4096l/submat_ablation/attn_orth_muon_mlp_muon_submat8.y
 bash run.sh configs/360m_4096l/submat_ablation/attn_orth_muon_mlp_muon_submat32.yaml
 bash run.sh configs/360m_4096l/submat_ablation/attn_orth_muon_mlp_muon_submat128.yaml
 ```
+
+```bash
+bash run.sh configs/360m_4096l/submat_ablation/attn_muon_mlp_orth_muon_submat1.yaml
+bash run.sh configs/360m_4096l/submat_ablation/attn_muon_mlp_orth_muon_submat16.yaml
+bash run.sh configs/360m_4096l/submat_ablation/attn_orth_muon_mlp_muon_submat1.yaml
+bash run.sh configs/360m_4096l/submat_ablation/attn_orth_muon_mlp_muon_submat16.yaml
+bash run.sh configs/360m_4096l/submat_ablation/attn_orth_muon_mlp_orth_muon_submat1.yaml
+bash run.sh configs/360m_4096l/submat_ablation/attn_orth_muon_mlp_orth_muon_submat8.yaml
+bash run.sh configs/360m_4096l/submat_ablation/attn_orth_muon_mlp_orth_muon_submat16.yaml
+bash run.sh configs/360m_4096l/submat_ablation/attn_orth_muon_mlp_orth_muon_submat128.yaml
+```

@@ -1,0 +1,13 @@
+extends: ../sweeps/muon_lr_wd/muon_lr0p002_wd0p3.yaml
+model:
+  attention_affine: true
+  mlp_affine: false
+train:
+  output: ./output/360m_4096l/submat_ablation/attn_orth_muon_mlp_muon_submat16
+optim:
+  default_role_optimizer: orth_muon
+  role_overrides:
+    mlp.gate: muon
+    mlp.up: muon
+    mlp.down: muon
+  submat_dim: 16
