@@ -120,3 +120,12 @@ bash run.sh configs/360m_4096l/submat_ablation/attn_orth_muon_mlp_orth_muon_subm
 bash run.sh configs/360m_4096l/submat_ablation/attn_orth_muon_mlp_orth_muon_submat16.yaml
 bash run.sh configs/360m_4096l/submat_ablation/attn_orth_muon_mlp_orth_muon_submat128.yaml
 ```
+
+### Tmp Ablation
+
+```bash
+bash run.sh configs/360m_4096l/tmp_ablation/attn_head_interleaved_submat8.yaml
+bash run.sh configs/360m_4096l/tmp_ablation/attn_head_interleaved_submat32.yaml
+bash run.sh configs/360m_4096l/tmp_ablation/attn_o_input_submat8.yaml
+bash run.sh configs/360m_4096l/tmp_ablation/attn_o_input_submat32.yaml
+```

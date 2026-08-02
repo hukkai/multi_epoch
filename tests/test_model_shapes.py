@@ -1,33 +1,60 @@
 from __future__ import annotations
 
+import pytest
 import torch
 
 from ortho_llm.config import config_from_dict
 from ortho_llm.modeling import build_model
 
-def tiny_config(enabled_roles: list[str]):
+def tiny_config(
+    enabled_roles: list[str],
+    *,
+    hidden_size: int = 32,
+    num_heads: int = 4,
+    num_kv_heads: int | None = None,
+    submat_dim: int = 4,
+    attention_head_interleaved: bool = False,
+    attention_o_input_submat: bool = False,
+):
     parameterization = "grouped_matrix" if enabled_roles else "dense"
+    model_config = {
+        "vocab_size": 128,
+        "hidden_size": hidden_size,
+        "num_layers": 2,
+        "num_heads": num_heads,
+        "mlp_ratio": 2,
+        "max_position_embeddings": 32,
+        "parameterization": parameterization,
+        "enabled_roles": enabled_roles,
+        "attention_head_interleaved": attention_head_interleaved,
+        "attention_o_input_submat": attention_o_input_submat,
+    }
+    if num_kv_heads is not None:
+        model_config["num_kv_heads"] = num_kv_heads
     return config_from_dict(
         {
-            "model": {
-                "vocab_size": 128,
-                "hidden_size": 32,
-                "num_layers": 2,
-                "num_heads": 4,
-                "mlp_ratio": 2,
-                "max_position_embeddings": 32,
-                "parameterization": parameterization,
-                "enabled_roles": enabled_roles,
-            },
+            "model": model_config,
             "train": {
                 "batch_size": 2,
                 "global_batch_size": 2,
                 "seq_length": 16,
                 "num_steps": 2,
             },
-            "optim": {"submat_dim": 4},
+            "optim": {"submat_dim": submat_dim},
         }
     )
+
+
+def storage_to_logical_rows(model, role: str) -> list[int]:
+    storage = model.role_parameters()[role]
+    rows, cols = storage.shape[-2:]
+    with torch.no_grad():
+        row_ids = torch.arange(rows, dtype=storage.dtype)[:, None].expand(rows, cols)
+        storage[0].copy_(row_ids)
+    layer_views = model.chunk_bank.layer_views()
+    weight = model.chunk_bank.attention_weight(role, 0, layer_views)
+    logical_to_storage = weight[:, 0].to(dtype=torch.long)
+    return torch.argsort(logical_to_storage).tolist()
 
 
 def test_dense_forward_returns_logits_and_loss() -> None:
@@ -76,17 +103,155 @@ def test_grouped_matrix_modes_build_and_store_expected_shapes() -> None:
 
 
 def test_chunk_bank_returns_layer_sliced_weights() -> None:
-    config = tiny_config(["attn.q", "mlp.up"])
+    config = tiny_config(["attn.q", "attn.o", "mlp.up"])
     model = build_model(config.model)
     layer_views = model.chunk_bank.layer_views()
 
     attn_weight = model.chunk_bank.attention_weight("attn.q", layer_idx=1, layer_views=layer_views)
+    output_weight = model.chunk_bank.attention_weight("attn.o", layer_idx=1, layer_views=layer_views)
     mlp_weight = model.chunk_bank.mlp_weight("mlp.up", layer_idx=0, layer_views=layer_views)
 
     assert tuple(attn_weight.shape) == (32, 32)
+    assert tuple(output_weight.shape) == (32, 32)
     assert tuple(mlp_weight.shape) == (64, 32)
     assert attn_weight is layer_views.weights["attn.q"][1]
+    assert output_weight is layer_views.weights["attn.o"][1]
     assert mlp_weight is layer_views.weights["mlp.up"][0]
+    assert {
+        spec.role: spec.materialization
+        for spec in model.get_parameter_registry().specs
+        if spec.layer_idx == 0
+    } == {
+        "attn.q": "identity",
+        "attn.o": "identity",
+        "mlp.up": "identity",
+    }
+
+
+@pytest.mark.parametrize(
+    ("submat_dim", "expected_first_blocks"),
+    [
+        (
+            8,
+            [
+                [head * 4 for head in range(0, 16, 2)],
+                [head * 4 for head in range(1, 16, 2)],
+            ],
+        ),
+        (16, [[head * 4 for head in range(16)]]),
+        (
+            32,
+            [[head * 4 + offset for offset in range(2) for head in range(16)]],
+        ),
+    ],
+)
+def test_attention_head_interleaving_spreads_storage_blocks_across_heads(
+    submat_dim: int,
+    expected_first_blocks: list[list[int]],
+) -> None:
+    config = tiny_config(
+        ["attn.q"],
+        hidden_size=64,
+        num_heads=16,
+        submat_dim=submat_dim,
+        attention_head_interleaved=True,
+    )
+    model = build_model(config.model)
+    storage_order = storage_to_logical_rows(model, "attn.q")
+
+    for block_idx, expected in enumerate(expected_first_blocks):
+        start = block_idx * submat_dim
+        assert storage_order[start : start + submat_dim] == expected
+    assert sorted(storage_order) == list(range(config.model.hidden_size))
+    assert model.get_parameter_registry().specs[0].materialization == "head_interleaved"
+
+
+@pytest.mark.parametrize("role", ["attn.k", "attn.v"])
+def test_attention_head_interleaving_uses_kv_heads_for_gqa(role: str) -> None:
+    config = tiny_config(
+        [role],
+        hidden_size=64,
+        num_heads=16,
+        num_kv_heads=8,
+        submat_dim=4,
+        attention_head_interleaved=True,
+    )
+    model = build_model(config.model)
+    storage_order = storage_to_logical_rows(model, role)
+
+    assert storage_order[:4] == [0, 8, 16, 24]
+    assert storage_order[4:8] == [4, 12, 20, 28]
+    assert sorted(storage_order) == list(range(32))
+
+
+def test_attention_o_input_submat_transposes_before_output_affine() -> None:
+    config = tiny_config(["attn.o"], attention_o_input_submat=True)
+    model = build_model(config.model)
+    attention = model.layers[0].self_attn
+    storage = model.role_parameters()["attn.o"]
+    raw = torch.arange(32 * 32, dtype=storage.dtype).reshape(32, 32)
+    affine = torch.linspace(0.5, 1.5, 32)
+    with torch.no_grad():
+        storage[0].copy_(raw)
+        attention.o_affine.copy_(affine)
+
+    layer_views = model.chunk_bank.layer_views()
+    weight = model.chunk_bank.attention_weight("attn.o", 0, layer_views)
+    x = torch.randn(2, 3, 32)
+    actual = attention._linear(x, "attn.o", "o_proj", model.chunk_bank, 0, layer_views)
+
+    torch.testing.assert_close(weight, raw.T)
+    torch.testing.assert_close(actual, torch.nn.functional.linear(x, raw.T * affine[:, None]))
+    assert model.get_parameter_registry().specs[0].materialization == "transpose"
+
+
+def test_attention_o_combines_input_submat_with_head_interleaving() -> None:
+    config = tiny_config(
+        ["attn.o"],
+        attention_head_interleaved=True,
+        attention_o_input_submat=True,
+    )
+    model = build_model(config.model)
+    storage = model.role_parameters()["attn.o"]
+    raw = torch.arange(32 * 32, dtype=storage.dtype).reshape(32, 32)
+    with torch.no_grad():
+        storage[0].copy_(raw)
+
+    storage_order = [head * 8 + offset for offset in range(8) for head in range(4)]
+    input_major = torch.empty_like(raw)
+    input_major[storage_order] = raw
+    expected = input_major.T
+    actual = model.chunk_bank.attention_weight("attn.o", 0, model.chunk_bank.layer_views())
+
+    torch.testing.assert_close(actual, expected)
+    assert model.get_parameter_registry().specs[0].materialization == "head_interleaved_transpose"
+    assert not any("permutation" in key for key in model.state_dict())
+
+
+@pytest.mark.parametrize(
+    ("attention_head_interleaved", "attention_o_input_submat"),
+    [(True, False), (False, True), (True, True)],
+)
+def test_attention_layout_modes_support_full_forward_and_backward(
+    attention_head_interleaved: bool,
+    attention_o_input_submat: bool,
+) -> None:
+    config = tiny_config(
+        ["attn.q", "attn.k", "attn.v", "attn.o"],
+        attention_head_interleaved=attention_head_interleaved,
+        attention_o_input_submat=attention_o_input_submat,
+    )
+    model = build_model(config.model)
+    input_ids = torch.randint(0, config.model.vocab_size, (2, 16))
+    labels = torch.randint(0, config.model.vocab_size, (2, 16))
+
+    output = model(input_ids=input_ids, labels=labels)
+    assert output["logits"].shape == (2, 16, config.model.vocab_size)
+    assert output["loss"] is not None
+    output["loss"].backward()
+
+    assert torch.isfinite(output["loss"])
+    assert all(param.grad is not None for param in model.role_parameters().values())
 
 
 def test_affines_follow_enabled_roles() -> None:

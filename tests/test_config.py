@@ -8,6 +8,12 @@ from ortho_llm.config import ATTN_ROLES, MLP_ROLES, config_from_dict, dump_confi
 
 
 CONFIG_PATHS = sorted(Path("configs").rglob("*.yaml"))
+TMP_ABLATION_CASES = [
+    ("attn_head_interleaved_submat8.yaml", True, False, 8),
+    ("attn_head_interleaved_submat32.yaml", True, False, 32),
+    ("attn_o_input_submat8.yaml", False, True, 8),
+    ("attn_o_input_submat32.yaml", False, True, 32),
+]
 
 
 def test_role_constants_cover_attention_and_mlp() -> None:
@@ -64,6 +70,8 @@ def test_nested_orth_adam_config_sets_role_policy() -> None:
     assert config.model.row_block_size == 4
     assert config.model.attention_affine is True
     assert config.model.mlp_affine is True
+    assert config.model.attention_head_interleaved is False
+    assert config.model.attention_o_input_submat is False
 
 
 def test_flat_config_is_rejected() -> None:
@@ -112,6 +120,35 @@ def test_migrated_repo_config_loads() -> None:
         "mlp.down",
     ]
     assert config.optim.default_role_optimizer == "orth_adam"
+
+
+@pytest.mark.parametrize(
+    ("filename", "head_interleaved", "o_input_submat", "submat_dim"),
+    TMP_ABLATION_CASES,
+)
+def test_tmp_ablation_configs_set_requested_layout_and_optimizers(
+    filename: str,
+    head_interleaved: bool,
+    o_input_submat: bool,
+    submat_dim: int,
+) -> None:
+    path = Path("configs/360m_4096l/tmp_ablation") / filename
+    config = load_config(path)
+
+    assert config.model.attention_head_interleaved is head_interleaved
+    assert config.model.attention_o_input_submat is o_input_submat
+    assert config.model.attention_affine is True
+    assert config.model.mlp_affine is False
+    assert config.optim.default_role_optimizer == "orth_muon"
+    assert config.optim.role_overrides == {
+        "mlp.gate": "muon",
+        "mlp.up": "muon",
+        "mlp.down": "muon",
+    }
+    assert config.optim.submat_dim == submat_dim
+    assert config.optim.muon_lr == pytest.approx(0.002)
+    assert config.optim.muon_weight_decay == pytest.approx(0.3)
+    assert config.train.output.endswith(f"/tmp_ablation/{path.stem}")
 
 
 def test_config_extends_deep_merges_parent(tmp_path: Path) -> None:

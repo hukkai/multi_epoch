@@ -56,6 +56,18 @@ optim:
     attn.v: muon
 ```
 
+Attention row blocks can optionally interleave rows across heads, and the
+output projection can store row blocks along its logical input axis:
+
+```yaml
+model:
+  attention_head_interleaved: false
+  attention_o_input_submat: false
+```
+
+Both options default to `false`. Head interleaving applies to Q/K/V, and also
+to the O input axis when both options are enabled.
+
 Configs can extend another config with a relative path and override only the
 changed fields:
 

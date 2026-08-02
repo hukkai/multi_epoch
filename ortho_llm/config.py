@@ -44,6 +44,8 @@ class ModelConfig:
     enabled_roles: list[str] = field(default_factory=list)
     attention_affine: bool = True
     mlp_affine: bool = True
+    attention_head_interleaved: bool = False
+    attention_o_input_submat: bool = False
     init: str = "qr"
     num_kv_heads: int | None = None
     row_block_size: int | None = None

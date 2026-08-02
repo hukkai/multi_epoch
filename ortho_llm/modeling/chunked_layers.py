@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import torch
@@ -40,6 +41,27 @@ def _stiefel_block_init_3d(param: nn.Parameter, submat_dim: int) -> None:
         param.data.copy_(q.reshape_as(work).to(dtype=param.dtype))
 
 
+def _attention_storage_row_order(
+    num_heads: int,
+    head_dim: int,
+    submat_dim: int,
+) -> torch.Tensor:
+    """Return logical row indices in their interleaved storage order."""
+    if submat_dim < num_heads:
+        head_stride = math.ceil(num_heads / submat_dim)
+        head_order = [
+            head
+            for offset in range(head_stride)
+            for head in range(offset, num_heads, head_stride)
+        ]
+    else:
+        head_order = list(range(num_heads))
+    return torch.tensor(
+        [head * head_dim + offset for offset in range(head_dim) for head in head_order],
+        dtype=torch.long,
+    )
+
+
 class RoleChunkBank(nn.Module):
     def __init__(self, config: ModelConfig) -> None:
         super().__init__()
@@ -52,6 +74,7 @@ class RoleChunkBank(nn.Module):
         self.kv_hidden_size = self.num_kv_heads * self.head_dim
         self.enabled_roles = tuple(config.enabled_roles)
         self.weights = nn.ParameterDict()
+        self._attention_inverse_permutation_names: dict[str, str] = {}
 
         for role in self.enabled_roles:
             safe_name = ROLE_TO_SAFE_NAME[role]
@@ -59,6 +82,23 @@ class RoleChunkBank(nn.Module):
             weight = nn.Parameter(torch.empty(config.num_layers, rows, config.hidden_size))
             nn.init.normal_(weight, mean=0.0, std=config.hidden_size**-0.5)
             self.weights[safe_name] = weight
+
+            if self._uses_head_interleaving(role):
+                if config.row_block_size is None:
+                    raise ValueError("row_block_size must be set before configuring attention layout")
+                num_heads = self._heads_for_role(role)
+                storage_order = _attention_storage_row_order(
+                    num_heads,
+                    self.head_dim,
+                    config.row_block_size,
+                )
+                buffer_name = f"_{safe_name}_inverse_permutation"
+                self.register_buffer(
+                    buffer_name,
+                    torch.argsort(storage_order),
+                    persistent=False,
+                )
+                self._attention_inverse_permutation_names[role] = buffer_name
 
         self._init_role_weights()
         self.registry = self._build_registry()
@@ -79,6 +119,20 @@ class RoleChunkBank(nn.Module):
         if role in MLP_ROLES:
             return self.intermediate_size
         raise ValueError(f"Unsupported role {role!r}")
+
+    def _heads_for_role(self, role: str) -> int:
+        if role in {"attn.q", "attn.o"}:
+            return self.config.num_heads
+        if role in {"attn.k", "attn.v"}:
+            return self.num_kv_heads
+        raise ValueError(f"Role {role!r} has no attention head axis")
+
+    def _uses_head_interleaving(self, role: str) -> bool:
+        if not self.config.attention_head_interleaved:
+            return False
+        if role in {"attn.q", "attn.k", "attn.v"}:
+            return True
+        return role == "attn.o" and self.config.attention_o_input_submat
 
     def layer_views(self) -> RoleLayerViews:
         weights: dict[str, tuple[torch.Tensor, ...]] = {}
@@ -101,7 +155,13 @@ class RoleChunkBank(nn.Module):
         layer_idx: int,
         layer_views: RoleLayerViews,
     ) -> torch.Tensor:
-        return self._role_weight(role, layer_idx, layer_views)
+        weight = self._role_weight(role, layer_idx, layer_views)
+        permutation_name = self._attention_inverse_permutation_names.get(role)
+        if permutation_name is not None:
+            weight = weight.index_select(0, getattr(self, permutation_name))
+        if role == "attn.o" and self.config.attention_o_input_submat:
+            weight = weight.T
+        return weight
 
     def mlp_weight(
         self,
@@ -121,6 +181,16 @@ class RoleChunkBank(nn.Module):
             if role in ATTN_ROLES:
                 for layer_idx in range(self.config.num_layers):
                     logical_rows = self._rows_for_role(role)
+                    uses_interleaving = self._uses_head_interleaving(role)
+                    uses_transpose = role == "attn.o" and self.config.attention_o_input_submat
+                    if uses_interleaving and uses_transpose:
+                        materialization = "head_interleaved_transpose"
+                    elif uses_interleaving:
+                        materialization = "head_interleaved"
+                    elif uses_transpose:
+                        materialization = "transpose"
+                    else:
+                        materialization = "identity"
                     specs.append(
                         MatrixSpec(
                             role=role,
@@ -128,7 +198,7 @@ class RoleChunkBank(nn.Module):
                             logical_shape=(logical_rows, self.hidden_size),
                             storage_name=safe_name,
                             storage_slice=(layer_idx, slice(None), slice(None)),
-                            materialization="identity",
+                            materialization=materialization,
                         )
                     )
             else:
