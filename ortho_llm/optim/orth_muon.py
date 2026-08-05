@@ -8,7 +8,7 @@ import torch.distributed as dist
 
 from .muon import orthogonalize_newton_schulz
 from .ops import polar
-from .stiefel_update import stiefel_update_taylor
+from .stiefel_update import polar_taylor4, stiefel_update_taylor
 
 
 class OrthMuon(torch.optim.Optimizer):
@@ -155,16 +155,19 @@ class OrthMuon(torch.optim.Optimizer):
                     x = param_slice.float().reshape(-1, submat_dim, cols)
                     if landing_every > 1:
                         # Ambient Muon steps leave x outside the Stiefel manifold. Project
-                        # it back before using it as the anchor for the tangent update.
-                        x = polar(x)
+                        # it back with a fixed fourth-order Taylor polar before using it
+                        # as the anchor for the tangent update.
+                        x = polar_taylor4(x)
 
                     landing_update = update.reshape_as(x)
                     landing_update.mul_(-lr * scale)
                     new_x = stiefel_update_taylor(x, landing_update, do_projection=True)
 
-                    if landing_every > 1 or (is_last and strict_stiefel):
-                        # A periodic landing step ends exactly on the manifold. Strict
-                        # OrthMuon keeps its existing configurable exact-correction cadence.
+                    exact_correction_due = is_last or (landing_every > 1 and force_landing)
+                    if exact_correction_due and strict_stiefel:
+                        # Normal landing steps already use Taylor polar/retraction. Keep
+                        # exact polar only for the configured strict cadence and the final
+                        # forced landing.
                         new_x = polar(new_x)
 
                     new_param_slice = new_x.reshape_as(param_slice).to(dtype=param.dtype)

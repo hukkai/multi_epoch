@@ -95,6 +95,12 @@ def _stiefel_update_series4_unprojected_eager(
     return _apply_series(work, gram_error, _COEFFS4).to(a.dtype)
 
 
+def _polar_taylor4_eager(a: torch.Tensor) -> torch.Tensor:
+    work = a.to(_screen_dtype(a.dtype))
+    gram_error = _gram_error_matrix(work)
+    return _apply_series(work, gram_error, _COEFFS4).to(a.dtype)
+
+
 if _compile_stiefel_enabled() and hasattr(torch, "compile"):
     _stiefel_update_series4 = torch.compile(
         _stiefel_update_series4_eager,
@@ -104,9 +110,18 @@ if _compile_stiefel_enabled() and hasattr(torch, "compile"):
         _stiefel_update_series4_unprojected_eager,
         fullgraph=True,
     )
+    _polar_taylor4 = torch.compile(_polar_taylor4_eager, fullgraph=True)
 else:
     _stiefel_update_series4 = _stiefel_update_series4_eager
     _stiefel_update_series4_unprojected = _stiefel_update_series4_unprojected_eager
+    _polar_taylor4 = _polar_taylor4_eager
+
+
+@torch.no_grad()
+def polar_taylor4(a: torch.Tensor) -> torch.Tensor:
+    """Apply a fixed fourth-order inverse-square-root polar approximation."""
+    _validate_shape(a)
+    return _polar_taylor4(a)
 
 
 @torch.no_grad()

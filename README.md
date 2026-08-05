@@ -88,10 +88,10 @@ optim:
 
 The default value `1` preserves strict OrthMuon. For a value `N > 1`, the
 first `N - 1` steps use ambient Muon updates without weight decay. Step `N`
-projects the current parameter onto the Stiefel manifold, applies the
-OrthMuon tangent update and retraction, and finishes with an exact polar
-projection. The final training step always lands even when it is not divisible
-by `N`.
+uses a fixed fourth-order Taylor polar, then applies the OrthMuon tangent update
+and fourth-order Taylor retraction. Exact polar correction remains limited to
+the configured `strict_stiefel_every` cadence and the final forced landing. The
+final training step always lands even when it is not divisible by `N`.
 
 Dense runs use:
 

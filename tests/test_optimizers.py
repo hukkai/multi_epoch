@@ -12,7 +12,9 @@ from ortho_llm.optim.stiefel_update import (
     _COEFFS4,
     _apply_series,
     _apply_series2_eager,
+    _polar_taylor4_eager,
     _stiefel_update_series4_eager,
+    polar_taylor4,
     stiefel_project,
     stiefel_update_taylor,
 )
@@ -482,8 +484,8 @@ def test_orth_muon_passes_scaled_update_for_internal_projection(monkeypatch) -> 
 def test_orth_muon_periodic_landing_uses_ambient_steps_then_projects(monkeypatch) -> None:
     events: list[str] = []
 
-    def fake_polar(x: torch.Tensor) -> torch.Tensor:
-        events.append("polar")
+    def fake_polar_taylor4(x: torch.Tensor) -> torch.Tensor:
+        events.append("polar_taylor4")
         return x
 
     def fake_stiefel_update(
@@ -499,7 +501,7 @@ def test_orth_muon_periodic_landing_uses_ambient_steps_then_projects(monkeypatch
         "ortho_llm.optim.orth_muon.orthogonalize_newton_schulz",
         lambda update, **_kwargs: torch.ones_like(update),
     )
-    monkeypatch.setattr("ortho_llm.optim.orth_muon.polar", fake_polar)
+    monkeypatch.setattr("ortho_llm.optim.orth_muon.polar_taylor4", fake_polar_taylor4)
     monkeypatch.setattr(
         "ortho_llm.optim.orth_muon.stiefel_update_taylor",
         fake_stiefel_update,
@@ -525,7 +527,7 @@ def test_orth_muon_periodic_landing_uses_ambient_steps_then_projects(monkeypatch
     param.grad = torch.ones_like(param)
     optimizer.step(completed_step=2)
     torch.testing.assert_close(param, torch.full_like(param, -2.0 * step_scale))
-    assert events == ["polar", "retract", "polar"]
+    assert events == ["polar_taylor4", "retract"]
 
 
 def test_orth_muon_periodic_landing_requires_step_and_can_force_final_landing(monkeypatch) -> None:
@@ -536,16 +538,37 @@ def test_orth_muon_periodic_landing_requires_step_and_can_force_final_landing(mo
     with pytest.raises(ValueError, match="completed_step must be a positive integer"):
         optimizer.step()
 
-    polar_calls = 0
+    taylor_polar_calls = 0
+    exact_polar_calls = 0
 
-    def count_polar(x: torch.Tensor) -> torch.Tensor:
-        nonlocal polar_calls
-        polar_calls += 1
+    def count_polar_taylor4(x: torch.Tensor) -> torch.Tensor:
+        nonlocal taylor_polar_calls
+        taylor_polar_calls += 1
         return x
 
+    def count_polar(x: torch.Tensor) -> torch.Tensor:
+        nonlocal exact_polar_calls
+        exact_polar_calls += 1
+        return x
+
+    monkeypatch.setattr("ortho_llm.optim.orth_muon.polar_taylor4", count_polar_taylor4)
     monkeypatch.setattr("ortho_llm.optim.orth_muon.polar", count_polar)
     optimizer.step(completed_step=1, force_landing=True)
-    assert polar_calls == 2
+    assert taylor_polar_calls == 1
+    assert exact_polar_calls == 1
+
+
+def test_polar_taylor4_matches_series_reference() -> None:
+    generator = torch.Generator().manual_seed(2)
+    raw = torch.randn(3, 16, 4, generator=generator)
+    q = torch.linalg.qr(raw, mode="reduced").Q.transpose(-1, -2).contiguous()
+    a = q + 1e-2 * torch.randn(q.shape, generator=generator)
+    gram_error = a @ a.transpose(-1, -2)
+    gram_error.diagonal(dim1=-2, dim2=-1).sub_(1)
+    expected = _apply_series_reference(a, gram_error, _COEFFS4)
+
+    torch.testing.assert_close(_polar_taylor4_eager(a), expected)
+    torch.testing.assert_close(polar_taylor4(a), expected)
 
 
 def test_stiefel_horner_series_matches_sequential_reference() -> None:
