@@ -71,6 +71,12 @@ def test_flat_config_is_rejected() -> None:
         config_from_dict({"data_dir": "./data", "enabled_roles": []})
 
 
+@pytest.mark.parametrize("value", (0, -1, 1.5, True, "2"))
+def test_orth_muon_landing_every_requires_positive_integer(value) -> None:
+    with pytest.raises(ValueError, match="orth_muon_landing_every must be a positive integer"):
+        config_from_dict({"optim": {"orth_muon_landing_every": value}})
+
+
 def test_legacy_orth_muon_update_method_key_is_rejected() -> None:
     with pytest.raises(ValueError, match="orth_muon_update_method"):
         config_from_dict(

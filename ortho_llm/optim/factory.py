@@ -138,6 +138,7 @@ def _build_role_optimizer(kind: str, params: list[torch.nn.Parameter], config: E
             ns_steps=optim.muon_ns_steps,
             eps=optim.muon_eps,
             submat_dim=optim.submat_dim,
+            landing_every=optim.orth_muon_landing_every,
         )
     raise ValueError(f"Unsupported role optimizer kind {kind!r}")
 

@@ -84,12 +84,22 @@ def _set_optimizer_lrs(bundle: OptimBundle, config: ExperimentConfig, step: int,
     return main_lr, muon_lr
 
 
-def _step_optimizers(bundle: OptimBundle, *, is_strict_step: bool) -> None:
+def _step_optimizers(
+    bundle: OptimBundle,
+    *,
+    is_strict_step: bool,
+    completed_step: int,
+    is_final_step: bool,
+) -> None:
     for kind, optimizer in bundle.role_optimizers.items():
         if kind == "orth_adam":
             optimizer.step(is_last=is_strict_step)
         elif kind == "orth_muon":
-            optimizer.step(is_last=is_strict_step)
+            optimizer.step(
+                is_last=is_strict_step,
+                completed_step=completed_step,
+                force_landing=is_final_step,
+            )
         else:
             optimizer.step()
     if bundle.main_optimizer is not None:
@@ -307,11 +317,16 @@ def train(config: ExperimentConfig) -> None:
             torch.nn.utils.clip_grad_norm_(model.parameters(), config.train.clip_grad)
 
         module = model.module if hasattr(model, "module") else model
+        completed_step = step + 1
         is_strict_step = _strict_stiefel_due(config.optim.strict_stiefel_every, step, config.train.num_steps)
-        _step_optimizers(bundle, is_strict_step=is_strict_step)
+        _step_optimizers(
+            bundle,
+            is_strict_step=is_strict_step,
+            completed_step=completed_step,
+            is_final_step=completed_step == config.train.num_steps,
+        )
         bundle.zero_grad(set_to_none=True)
 
-        completed_step = step + 1
         val_metrics: dict[str, float | int | None] = {"val_loss": None, "val_ppl": None, "val_batches": 0}
         eval_configured = (
             val_dataset is not None

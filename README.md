@@ -77,6 +77,22 @@ K/V:              (num_layers, num_kv_heads * head_dim, hidden_size)
 Orthogonal optimizers split each matrix into row blocks of shape
 `(submat_dim, hidden_size)`.
 
+OrthMuon supports periodic landing through `orth_muon_landing_every`:
+
+```yaml
+optim:
+  default_role_optimizer: orth_muon
+  submat_dim: 32
+  orth_muon_landing_every: 4
+```
+
+The default value `1` preserves strict OrthMuon. For a value `N > 1`, the
+first `N - 1` steps use ambient Muon updates without weight decay. Step `N`
+projects the current parameter onto the Stiefel manifold, applies the
+OrthMuon tangent update and retraction, and finishes with an exact polar
+projection. The final training step always lands even when it is not divisible
+by `N`.
+
 Dense runs use:
 
 ```yaml

@@ -21,6 +21,7 @@ class OrthMuon(torch.optim.Optimizer):
         ns_steps: int = 5,
         eps: float = 1e-7,
         submat_dim: int = 64,
+        landing_every: int = 1,
         strict_stiefel: bool = True,
         async_gather: bool = True,
     ) -> None:
@@ -37,6 +38,8 @@ class OrthMuon(torch.optim.Optimizer):
             raise ValueError(f"Invalid eps value: {eps}")
         if submat_dim <= 0:
             raise ValueError(f"Invalid submat_dim value: {submat_dim}")
+        if isinstance(landing_every, bool) or not isinstance(landing_every, int) or landing_every <= 0:
+            raise ValueError(f"Invalid landing_every value: {landing_every}")
 
         defaults = {
             "lr": lr,
@@ -45,6 +48,7 @@ class OrthMuon(torch.optim.Optimizer):
             "ns_steps": ns_steps,
             "eps": eps,
             "submat_dim": submat_dim,
+            "landing_every": landing_every,
             "strict_stiefel": strict_stiefel,
             "async_gather": async_gather,
         }
@@ -83,7 +87,14 @@ class OrthMuon(torch.optim.Optimizer):
         return slice(rank * per_rank, (rank + 1) * per_rank)
 
     @torch.no_grad()
-    def step(self, closure: Any | None = None, is_last: bool = False) -> Any | None:
+    def step(
+        self,
+        closure: Any | None = None,
+        is_last: bool = False,
+        *,
+        completed_step: int | None = None,
+        force_landing: bool = False,
+    ) -> Any | None:
         loss = None
         if closure is not None:
             with torch.enable_grad():
@@ -99,8 +110,18 @@ class OrthMuon(torch.optim.Optimizer):
             ns_steps = group["ns_steps"]
             eps = group["eps"]
             submat_dim = group["submat_dim"]
+            landing_every = group.get("landing_every", 1)
             strict_stiefel = group["strict_stiefel"]
             async_gather = group.get("async_gather", True)
+
+            if landing_every > 1:
+                if completed_step is None or completed_step <= 0:
+                    raise ValueError(
+                        "completed_step must be a positive integer when landing_every is greater than 1"
+                    )
+                landing_due = completed_step % landing_every == 0 or force_landing
+            else:
+                landing_due = True
 
             for param in group["params"]:
                 if param.grad is None:
@@ -127,16 +148,26 @@ class OrthMuon(torch.optim.Optimizer):
 
                 scale = 0.2 * math.sqrt(max(rows, cols))
 
-                x = param_slice.float().reshape(-1, submat_dim, cols)
+                if not landing_due:
+                    param_slice.add_(update.to(dtype=param.dtype), alpha=-lr * scale)
+                    new_param_slice = param_slice
+                else:
+                    x = param_slice.float().reshape(-1, submat_dim, cols)
+                    if landing_every > 1:
+                        # Ambient Muon steps leave x outside the Stiefel manifold. Project
+                        # it back before using it as the anchor for the tangent update.
+                        x = polar(x)
 
-                update = update.reshape_as(x)
-                update.mul_(-lr * scale)
-                new_x = stiefel_update_taylor(x, update, do_projection=True)
+                    landing_update = update.reshape_as(x)
+                    landing_update.mul_(-lr * scale)
+                    new_x = stiefel_update_taylor(x, landing_update, do_projection=True)
 
-                if is_last and strict_stiefel:
-                    new_x = polar(new_x)
+                    if landing_every > 1 or (is_last and strict_stiefel):
+                        # A periodic landing step ends exactly on the manifold. Strict
+                        # OrthMuon keeps its existing configurable exact-correction cadence.
+                        new_x = polar(new_x)
 
-                new_param_slice = new_x.reshape_as(param_slice).to(dtype=param.dtype)
+                    new_param_slice = new_x.reshape_as(param_slice).to(dtype=param.dtype)
                 if world_size > 1:
                     send_buffer = new_param_slice.contiguous()
                     if async_gather:

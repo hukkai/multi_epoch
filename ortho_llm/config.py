@@ -83,6 +83,7 @@ class OptimConfig:
     orth_adam_eps: float = 1e-8
     submat_dim: int = 64
     strict_stiefel_every: int | str = "num_steps/50"
+    orth_muon_landing_every: int = 1
     muon_lr: float = 2.0e-3
     muon_min_lr: float = 2.0e-4
     muon_momentum: float = 0.95
@@ -279,6 +280,12 @@ def validate_config(config: ExperimentConfig) -> ExperimentConfig:
         raise ValueError("seq_length must be <= max_position_embeddings")
     if optim.submat_dim <= 0:
         raise ValueError("submat_dim must be positive")
+    if (
+        isinstance(optim.orth_muon_landing_every, bool)
+        or not isinstance(optim.orth_muon_landing_every, int)
+        or optim.orth_muon_landing_every <= 0
+    ):
+        raise ValueError("orth_muon_landing_every must be a positive integer")
     kv_heads = model.num_kv_heads or model.num_heads
     kv_dim = kv_heads * head_dim
     intermediate_size = model.hidden_size * model.mlp_ratio

@@ -187,6 +187,7 @@ def test_optimizer_factory_assigns_mixed_role_owners_once() -> None:
     assert "weight_decay" not in orth_muon_group
     assert "decay_lr" not in orth_muon_group
     assert "update_method" not in orth_muon_group
+    assert orth_muon_group["landing_every"] == 1
 
     _set_optimizer_lrs(bundle, config, step=0, warmup_steps=1)
     assert "decay_lr" in muon_group
@@ -476,6 +477,75 @@ def test_orth_muon_passes_scaled_update_for_internal_projection(monkeypatch) -> 
 
     assert "spectral_norm_u" not in optimizer.state[param]
     assert "spectral_norm_u" not in restored_optimizer.state[restored_param]
+
+
+def test_orth_muon_periodic_landing_uses_ambient_steps_then_projects(monkeypatch) -> None:
+    events: list[str] = []
+
+    def fake_polar(x: torch.Tensor) -> torch.Tensor:
+        events.append("polar")
+        return x
+
+    def fake_stiefel_update(
+        x: torch.Tensor,
+        update: torch.Tensor,
+        **kwargs,
+    ) -> torch.Tensor:
+        assert kwargs == {"do_projection": True}
+        events.append("retract")
+        return x + update
+
+    monkeypatch.setattr(
+        "ortho_llm.optim.orth_muon.orthogonalize_newton_schulz",
+        lambda update, **_kwargs: torch.ones_like(update),
+    )
+    monkeypatch.setattr("ortho_llm.optim.orth_muon.polar", fake_polar)
+    monkeypatch.setattr(
+        "ortho_llm.optim.orth_muon.stiefel_update_taylor",
+        fake_stiefel_update,
+    )
+
+    param = torch.nn.Parameter(torch.zeros(1, 4, 4))
+    optimizer = OrthMuon(
+        param,
+        lr=1.0,
+        momentum=0.0,
+        nesterov=False,
+        ns_steps=0,
+        submat_dim=2,
+        landing_every=2,
+    )
+    step_scale = 0.2 * 4**0.5
+
+    param.grad = torch.ones_like(param)
+    optimizer.step(completed_step=1)
+    torch.testing.assert_close(param, torch.full_like(param, -step_scale))
+    assert events == []
+
+    param.grad = torch.ones_like(param)
+    optimizer.step(completed_step=2)
+    torch.testing.assert_close(param, torch.full_like(param, -2.0 * step_scale))
+    assert events == ["polar", "retract", "polar"]
+
+
+def test_orth_muon_periodic_landing_requires_step_and_can_force_final_landing(monkeypatch) -> None:
+    param = torch.nn.Parameter(torch.zeros(1, 2, 2))
+    optimizer = OrthMuon(param, submat_dim=2, landing_every=4)
+    param.grad = torch.ones_like(param)
+
+    with pytest.raises(ValueError, match="completed_step must be a positive integer"):
+        optimizer.step()
+
+    polar_calls = 0
+
+    def count_polar(x: torch.Tensor) -> torch.Tensor:
+        nonlocal polar_calls
+        polar_calls += 1
+        return x
+
+    monkeypatch.setattr("ortho_llm.optim.orth_muon.polar", count_polar)
+    optimizer.step(completed_step=1, force_landing=True)
+    assert polar_calls == 2
 
 
 def test_stiefel_horner_series_matches_sequential_reference() -> None:
