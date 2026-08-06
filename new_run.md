@@ -123,23 +123,28 @@ bash run.sh configs/360m_4096l/submat_ablation/attn_orth_muon_mlp_orth_muon_subm
 
 ### OrthMuon Landing Frequency
 
-All five runs use `submat_dim: 32`. The strict run retracts every step; the
-other runs take ambient Muon steps and land periodically.
+The three runs below use `submat_dim: 32`. The strict run retracts every step;
+the other runs take ambient Muon steps and land periodically.
 
 ```bash
 bash run.sh configs/360m_4096l/landing/orth_muon_strict_submat32.yaml
 bash run.sh configs/360m_4096l/landing/orth_muon_land_every2_submat32.yaml
 bash run.sh configs/360m_4096l/landing/orth_muon_land_every4_submat32.yaml
-bash run.sh configs/360m_4096l/landing/orth_muon_land_every8_submat32.yaml
-bash run.sh configs/360m_4096l/landing/orth_muon_land_every32_submat32.yaml
 ```
 
-All five runs below use `submat_dim: 64`.
+The three runs below use `submat_dim: 64`.
 
 ```bash
 bash run.sh configs/360m_4096l/landing/orth_muon_strict_submat64.yaml
 bash run.sh configs/360m_4096l/landing/orth_muon_land_every2_submat64.yaml
 bash run.sh configs/360m_4096l/landing/orth_muon_land_every4_submat64.yaml
+```
+
+Additional landing-frequency runs:
+
+```bash
+bash run.sh configs/360m_4096l/landing/orth_muon_land_every8_submat32.yaml
+bash run.sh configs/360m_4096l/landing/orth_muon_land_every32_submat32.yaml
 bash run.sh configs/360m_4096l/landing/orth_muon_land_every8_submat64.yaml
 bash run.sh configs/360m_4096l/landing/orth_muon_land_every32_submat64.yaml
 ```
