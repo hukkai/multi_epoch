@@ -1,0 +1,6 @@
+extends: ../sweeps/orth_muon_lr/orth_muon_lr0p002.yaml
+train:
+  output: ./output/360m_4096l/landing/orth_muon_land_every8_submat64
+optim:
+  submat_dim: 64
+  orth_muon_landing_every: 8
