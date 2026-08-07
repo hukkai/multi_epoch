@@ -120,3 +120,9 @@ bash run.sh configs/360m_4096l/submat_ablation/attn_orth_muon_mlp_orth_muon_subm
 bash run.sh configs/360m_4096l/submat_ablation/attn_orth_muon_mlp_orth_muon_submat16.yaml
 bash run.sh configs/360m_4096l/submat_ablation/attn_orth_muon_mlp_orth_muon_submat128.yaml
 ```
+
+Re-run 1.3B:
+```bash
+bash run.sh configs/1p3b_4096l/sweeps/orth_muon_lr/orth_muon_lr0p001.yaml
+bash run.sh configs/1p3b_4096l/sweeps/orth_muon_lr/orth_muon_lr0p002.yaml
+```

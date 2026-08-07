@@ -25,7 +25,7 @@ def tiny_config(enabled_roles: list[str]):
                 "seq_length": 16,
                 "num_steps": 2,
             },
-            "optim": {"submat_dim": 4},
+            "optim": {"default_role_optimizer": "orth_adam", "submat_dim": 4},
         }
     )
 
@@ -214,7 +214,7 @@ def test_mlp_affines_can_be_disabled() -> None:
                 "seq_length": 16,
                 "num_steps": 2,
             },
-            "optim": {"submat_dim": 4},
+            "optim": {"default_role_optimizer": "orth_adam", "submat_dim": 4},
         }
     )
     model = build_model(config.model)
@@ -251,7 +251,7 @@ def test_grouped_matrix_gqa_kv_storage_is_rectangular() -> None:
                 "seq_length": 16,
                 "num_steps": 2,
             },
-            "optim": {"submat_dim": 4},
+            "optim": {"default_role_optimizer": "orth_adam", "submat_dim": 4},
         }
     )
     model = build_model(config.model)

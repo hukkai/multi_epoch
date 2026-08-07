@@ -16,6 +16,7 @@ ROLE_TO_SAFE_NAME = {role: role.replace(".", "_") for role in ALL_ROLES}
 SAFE_NAME_TO_ROLE = {value: key for key, value in ROLE_TO_SAFE_NAME.items()}
 
 OPTIMIZER_CHOICES = {"adamw", "orth_adam", "muon", "orth_muon", "frozen"}
+ORTHOGONAL_OPTIMIZERS = {"orth_adam", "orth_muon"}
 PARAMETERIZATION_CHOICES = {"dense", "grouped_matrix"}
 INIT_CHOICES = {"qr", "gaussian_then_project", "gaussian_no_project"}
 
@@ -42,11 +43,31 @@ class ModelConfig:
     tie_word_embeddings: bool = False
     parameterization: str = "dense"
     enabled_roles: list[str] = field(default_factory=list)
-    attention_affine: bool = True
-    mlp_affine: bool = True
+    attention_affine: bool | None = None
+    mlp_affine: bool | None = None
     init: str = "qr"
     num_kv_heads: int | None = None
     row_block_size: int | None = None
+
+    def affine_enabled_for_role(self, role: str) -> bool:
+        resolved_roles = getattr(self, "_resolved_affine_roles", None)
+        if role in ATTN_ROLES:
+            resolved_values = getattr(self, "_resolved_affine_values", {})
+            if (
+                resolved_roles is not None
+                and self.attention_affine == resolved_values.get("attention_affine")
+            ):
+                return role in resolved_roles
+            return bool(self.attention_affine)
+        if role in MLP_ROLES:
+            resolved_values = getattr(self, "_resolved_affine_values", {})
+            if (
+                resolved_roles is not None
+                and self.mlp_affine == resolved_values.get("mlp_affine")
+            ):
+                return role in resolved_roles
+            return bool(self.mlp_affine)
+        raise ValueError(f"Unknown role {role!r}")
 
 
 @dataclass
@@ -116,7 +137,10 @@ class ExperimentConfig:
     config_path: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        output = asdict(self)
+        for field_name in getattr(self.model, "_auto_affine_fields", ()):
+            output["model"][field_name] = None
+        return output
 
 
 def _parse_override_value(value: str) -> Any:
@@ -254,6 +278,44 @@ def _validate_roles(config: ExperimentConfig) -> None:
         raise ValueError(f"default_role_optimizer must be one of: {choices}")
 
 
+def _resolve_affine_defaults(config: ExperimentConfig) -> None:
+    model = config.model
+    resolved_roles: set[str] = set()
+    auto_fields: set[str] = set()
+
+    for field_name, roles in (
+        ("attention_affine", ATTN_ROLES),
+        ("mlp_affine", MLP_ROLES),
+    ):
+        configured = getattr(model, field_name)
+        if configured is not None and not isinstance(configured, bool):
+            raise ValueError(f"model.{field_name} must be true, false, or null")
+
+        enabled_roles = [role for role in roles if role in model.enabled_roles]
+        if configured is None:
+            auto_fields.add(field_name)
+            affine_roles = [
+                role
+                for role in enabled_roles
+                if config.optim.role_overrides.get(
+                    role, config.optim.default_role_optimizer
+                )
+                in ORTHOGONAL_OPTIMIZERS
+            ]
+        else:
+            affine_roles = enabled_roles if configured else []
+
+        resolved_roles.update(affine_roles)
+        setattr(model, field_name, bool(affine_roles))
+
+    model._resolved_affine_roles = frozenset(resolved_roles)
+    model._auto_affine_fields = frozenset(auto_fields)
+    model._resolved_affine_values = {
+        "attention_affine": model.attention_affine,
+        "mlp_affine": model.mlp_affine,
+    }
+
+
 def validate_config(config: ExperimentConfig) -> ExperimentConfig:
     model = config.model
     train = config.train
@@ -296,6 +358,7 @@ def validate_config(config: ExperimentConfig) -> ExperimentConfig:
             raise ValueError("model.row_block_size is internal and must match optim.submat_dim")
         model.row_block_size = optim.submat_dim
     _validate_roles(config)
+    _resolve_affine_defaults(config)
     return config
 
 

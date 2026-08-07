@@ -23,7 +23,7 @@ train:
   output: ./output/1p3b_4096l/muon
   log_interval: 10
   save_freq: 999999
-  batch_size: 2
+  batch_size: 4
   global_batch_size: 256
   seq_length: 4096
   num_steps: 48580

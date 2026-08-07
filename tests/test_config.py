@@ -66,6 +66,77 @@ def test_nested_orth_adam_config_sets_role_policy() -> None:
     assert config.model.mlp_affine is True
 
 
+@pytest.mark.parametrize(
+    ("optimizer", "expected"),
+    [
+        ("adamw", False),
+        ("muon", False),
+        ("orth_adam", True),
+        ("orth_muon", True),
+    ],
+)
+def test_affine_defaults_follow_role_optimizer(optimizer: str, expected: bool) -> None:
+    config = config_from_dict(
+        {
+            "model": {
+                "hidden_size": 32,
+                "num_layers": 2,
+                "num_heads": 4,
+                "mlp_ratio": 2,
+                "max_position_embeddings": 32,
+                "vocab_size": 128,
+                "parameterization": "grouped_matrix",
+                "enabled_roles": [*ATTN_ROLES, *MLP_ROLES],
+            },
+            "train": {
+                "batch_size": 2,
+                "global_batch_size": 2,
+                "seq_length": 16,
+                "num_steps": 2,
+            },
+            "optim": {"default_role_optimizer": optimizer, "submat_dim": 4},
+        }
+    )
+
+    assert config.model.attention_affine is expected
+    assert config.model.mlp_affine is expected
+    assert all(
+        config.model.affine_enabled_for_role(role) is expected
+        for role in (*ATTN_ROLES, *MLP_ROLES)
+    )
+
+
+def test_affine_auto_mode_follows_role_overrides() -> None:
+    config = config_from_dict(
+        {
+            "model": {
+                "hidden_size": 32,
+                "num_layers": 2,
+                "num_heads": 4,
+                "mlp_ratio": 2,
+                "max_position_embeddings": 32,
+                "vocab_size": 128,
+                "parameterization": "grouped_matrix",
+                "enabled_roles": ["attn.q", "attn.k"],
+            },
+            "train": {
+                "batch_size": 2,
+                "global_batch_size": 2,
+                "seq_length": 16,
+                "num_steps": 2,
+            },
+            "optim": {
+                "default_role_optimizer": "orth_muon",
+                "role_overrides": {"attn.k": "muon"},
+                "submat_dim": 4,
+            },
+        }
+    )
+
+    assert config.model.affine_enabled_for_role("attn.q") is True
+    assert config.model.affine_enabled_for_role("attn.k") is False
+
+
 def test_flat_config_is_rejected() -> None:
     with pytest.raises(ValueError, match="nested schema"):
         config_from_dict({"data_dir": "./data", "enabled_roles": []})

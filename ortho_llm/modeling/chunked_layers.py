@@ -178,7 +178,7 @@ class HybridAttention(nn.Module):
         ):
             affine = (
                 nn.Parameter(torch.ones(size))
-                if config.attention_affine and role in enabled_roles
+                if config.affine_enabled_for_role(role) and role in enabled_roles
                 else None
             )
             setattr(self, attr, affine)
@@ -266,7 +266,7 @@ class HybridMLP(nn.Module):
         ):
             affine = (
                 nn.Parameter(torch.ones(size))
-                if config.mlp_affine and role in enabled_roles
+                if config.affine_enabled_for_role(role) and role in enabled_roles
                 else None
             )
             setattr(self, attr, affine)

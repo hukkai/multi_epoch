@@ -205,6 +205,7 @@ def test_optimizer_factory_freezes_unowned_mlp_affines() -> None:
                 "max_position_embeddings": 32,
                 "parameterization": "grouped_matrix",
                 "enabled_roles": ["mlp.down"],
+                "mlp_affine": True,
             },
             "train": {
                 "batch_size": 2,
@@ -251,8 +252,8 @@ def test_optimizer_factory_tracks_mlp_affines_by_role() -> None:
     build_optimizers(config, model)
     assert model.layers[0].mlp.up_affine.requires_grad
     assert model.layers[1].mlp.up_affine.requires_grad
-    assert not model.layers[0].mlp.down_affine.requires_grad
-    assert not model.layers[1].mlp.down_affine.requires_grad
+    assert model.layers[0].mlp.down_affine is None
+    assert model.layers[1].mlp.down_affine is None
 
 
 def test_affine_lr_multiplier_scales_all_affine_parameters() -> None:
@@ -331,6 +332,7 @@ def test_optimizer_factory_freezes_unowned_attention_affines() -> None:
                 "max_position_embeddings": 32,
                 "parameterization": "grouped_matrix",
                 "enabled_roles": ["attn.q"],
+                "attention_affine": True,
             },
             "train": {
                 "batch_size": 2,
